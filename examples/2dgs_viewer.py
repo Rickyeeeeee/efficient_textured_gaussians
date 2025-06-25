@@ -33,7 +33,7 @@ def main(local_rank: int, world_rank, world_size: int, args):
         opacities.append(torch.sigmoid(ckpt["opacities"]))
         sh0.append(ckpt["sh0"])
         shN.append(ckpt["shN"])
-        textures.append(ckpt["textures"])
+        # textures.append(ckpt["textures"])
     means = torch.cat(means, dim=0)
     quats = torch.cat(quats, dim=0)
     scales = torch.cat(scales, dim=0)
@@ -42,7 +42,7 @@ def main(local_rank: int, world_rank, world_size: int, args):
     shN = torch.cat(shN, dim=0)
     colors = torch.cat([sh0, shN], dim=-2)
     sh_degree = int(math.sqrt(colors.shape[-2]) - 1)
-    textures = torch.cat(textures, dim=0)
+    # textures = torch.cat(textures, dim=0)
     print("Number of Gaussians:", len(means))
 
     # register and open viewer
@@ -61,13 +61,12 @@ def main(local_rank: int, world_rank, world_size: int, args):
         c2w = torch.tensor(camera_state.c2w).to(device, dtype=torch.float32)
         K = torch.tensor(camera_state.get_K([width, height])).to(device, dtype=torch.float32)
 
-        render_colors, _, _, _, _, _, _, _, _ = rasterization_textured_gaussians(
+        render_colors, _, _, _, _, _, _, _, _ = rasterization_2dgs(
             means=means,
             quats=quats,
             scales=scales,
             opacities=opacities,
             colors=colors,
-            textures=textures,
             viewmats=torch.linalg.inv(c2w[None]),
             Ks=K[None],
             width=width,
