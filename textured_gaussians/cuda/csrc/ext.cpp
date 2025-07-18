@@ -96,6 +96,17 @@ PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
     
 
     m.def(
+        "rasterize_to_pixels_fwd_textured_gaussians",
+        &gsplat::rasterize_to_pixels_fwd_textured_gaussians_tensor
+    );
+
+    m.def(
+        "rasterize_to_pixels_bwd_packed_textured_gaussians",
+        &gsplat::rasterize_to_pixels_bwd_packed_textured_gaussians_tensor
+    );
+    
+
+    m.def(
         "rasterize_to_indices_in_range_2dgs",
         &gsplat::rasterize_to_indices_in_range_2dgs_tensor
     );

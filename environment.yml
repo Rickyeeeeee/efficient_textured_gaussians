@@ -1,6 +1,9 @@
 name: textured_gaussians
 channels:
   - defaults
+  - conda-forge
+  - nvidia
+  - pytorch
 dependencies:
   - jpeg==9e=h5eee18b_3
   - cuda-cupti==12.4.127=0
