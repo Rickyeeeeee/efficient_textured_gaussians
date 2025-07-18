@@ -17,7 +17,7 @@ namespace cg = cooperative_groups;
  * Rasterization to Pixels Backward Pass Textured Gaussians
  ****************************************************************************/
 template <uint32_t COLOR_DIM, typename S>
-__global__ void rasterize_to_pixels_bwd_textured_gaussians_kernel(
+__global__ void rasterize_to_pixels_bwd_packed_textured_gaussians_kernel(
     const uint32_t C,    // number of cameras
     const uint32_t N,    // number of gaussians
     const uint32_t n_isects,  // number of ray-primitive intersections.
@@ -29,7 +29,7 @@ __global__ void rasterize_to_pixels_bwd_textured_gaussians_kernel(
     const S *__restrict__ colors,      // [C, N, COLOR_DIM] or [nnz, COLOR_DIM]  // Gaussian colors or ND features.
     const S *__restrict__ normals,     // [C, N, 3] or [nnz, 3]                  // The normals in camera space.
     const S *__restrict__ opacities,   // [C, N] or [nnz]                        // Gaussian opacities that support per-view values.
-    at::PackedTensorAccessor32<const S, 4, at::RestrictPtrTraits> textures_packed,    // [C, N, TEXTURE_DIM] or [nnz, TEXTURE_DIM] // Gaussian textures or ND features.
+    at::PackedTensorAccessor32<const S, 2, at::RestrictPtrTraits> textures_packed,    // [C, N, TEXTURE_DIM] or [nnz, TEXTURE_DIM] // Gaussian textures or ND features.
     const int32_t * __restrict__ texture_dims, // [C, N, 2] or [nnz, 2] // The dimensions of the textures in the packed tensor.
     const int32_t * __restrict__ texture_offsets, // [C, N, 1] or [nnz, 1] // The offsets of the textures in the packed tensor.
     const S *__restrict__ backgrounds, // [C, COLOR_DIM]                         // Background colors on camera basis
@@ -64,7 +64,7 @@ __global__ void rasterize_to_pixels_bwd_textured_gaussians_kernel(
     S *__restrict__ v_ray_transforms,            // [C, N, 3, 3] or [nnz, 3, 3]
     S *__restrict__ v_colors,    // [C, N, COLOR_DIM] or [nnz, COLOR_DIM]
     S *__restrict__ v_opacities, // [C, N] or [nnz]
-    at::PackedTensorAccessor32<S, 4, at::RestrictPtrTraits> v_textures_packed,  // [C, N, TEXTURE_DIM] or [nnz, TEXTURE_DIM]
+    at::PackedTensorAccessor32<S, 2, at::RestrictPtrTraits> v_textures_packed,  // [C, N, TEXTURE_DIM] or [nnz, TEXTURE_DIM]
     S *__restrict__ v_normals,   // [C, N, 3] or [nnz, 3]
     S *__restrict__ v_densify
 ) {
@@ -80,8 +80,6 @@ __global__ void rasterize_to_pixels_bwd_textured_gaussians_kernel(
     uint32_t i = block.group_index().y * tile_size + block.thread_index().y;
     uint32_t j = block.group_index().z * tile_size + block.thread_index().x;
     
-    uint32_t texture_res_y = 16
-    uint32_t texture_res_x = 16
 
     tile_offsets += camera_id * tile_height * tile_width;
     render_alphas += camera_id * image_height * image_width;
@@ -309,6 +307,8 @@ __global__ void rasterize_to_pixels_bwd_textured_gaussians_kernel(
             vec3<S> w_M;    // depth component of the ray transform matrix, per pixel
 
             // texture coordinates and bilinear interpolation weights
+            int texture_width = texture_dims[g * 2];
+            int texture_height = texture_dims[g * 2 + 1];
             int32_t ucoords[4];
             int32_t vcoords[4];
             S bilerp_weights[4];
@@ -343,14 +343,14 @@ __global__ void rasterize_to_pixels_bwd_textured_gaussians_kernel(
                 s = {ray_cross.x / ray_cross.z, ray_cross.y / ray_cross.z};
 
                 // compute texture coordinates and bilinear interpolation weights
-                valid_texture = compute_bilinear_coords_weights(s.x, s.y, texture_res_x, texture_res_y, ucoords, vcoords, bilerp_weights);
+                valid_texture = compute_bilinear_coords_weights(s.x, s.y, texture_width, texture_height, ucoords, vcoords, bilerp_weights);
 
                 // computer alpha scaling factor
                 uint32_t offset = texture_offsets[g];
                 if (valid_texture > 0) {
                     alpha_scaling_factor = 0.0f;
                     for (uint32_t i = 0; i < 4; ++i) {
-                        alpha_scaling_factor += bilerp_weights[i] * textures[3][offset + ucoords[i] * texture_res_x + vcoords[i]];
+                        alpha_scaling_factor += bilerp_weights[i] * textures_packed[3][offset + ucoords[i] * texture_width + vcoords[i]];
                     }
                 } else {
                     alpha_scaling_factor = 1.0f;
@@ -448,8 +448,8 @@ __global__ void rasterize_to_pixels_bwd_textured_gaussians_kernel(
                     if(valid_texture > 0) {
                         // update texture gradients
                         for (uint32_t i = 0; i < 4; ++i) {
-                            gpuAtomicAdd(&v_textures_packed[k][offset + ucoords[i] * texture_res_x + vcoords[i]], fac * bilerp_weights[i] * v_render_c[k]);
-                            tex_colors[k] += bilerp_weights[i] * textures[k][offset + ucoords[i] * texture_res_x + vcoords[i]];
+                            gpuAtomicAdd(&v_textures_packed[k][offset + ucoords[i] * texture_width + vcoords[i]], fac * bilerp_weights[i] * v_render_c[k]);
+                            tex_colors[k] += bilerp_weights[i] * textures_packed[k][offset + ucoords[i] * texture_width + vcoords[i]];
                         }
                     }
                 }
@@ -570,7 +570,7 @@ __global__ void rasterize_to_pixels_bwd_textured_gaussians_kernel(
                     // update alpha scaling factor gradients
                     if (valid_texture > 0) {
                         for (uint32_t i = 0; i < 4; ++i) {
-                            gpuAtomicAdd(&v_textures_packed[3][offset + ucoords[i] * texture_res_x + vcoords[i]], bilerp_weights[i] * vis * opac * v_alpha);
+                            gpuAtomicAdd(&v_textures_packed[3][offset + ucoords[i] * texture_width + vcoords[i]], bilerp_weights[i] * vis * opac * v_alpha);
                         }
                     }
                 }
@@ -770,7 +770,7 @@ call_kernel_with_dim(
         at::cuda::CUDAStream stream = at::cuda::getCurrentCUDAStream();
 
         if (cudaFuncSetAttribute(
-                rasterize_to_pixels_bwd_textured_gaussians_kernel<CDIM, float>,
+                rasterize_to_pixels_bwd_packed_textured_gaussians_kernel<CDIM, float>,
                 cudaFuncAttributeMaxDynamicSharedMemorySize,
                 shared_mem
             ) != cudaSuccess) {
@@ -780,7 +780,7 @@ call_kernel_with_dim(
                 " bytes), try lowering tile_size."
             );
         }
-        rasterize_to_pixels_bwd_textured_gaussians_kernel<CDIM, float>
+        rasterize_to_pixels_bwd_packed_textured_gaussians_kernel<CDIM, float>
             <<<blocks, threads, shared_mem, stream>>>(
                 C,
                 N,
@@ -791,7 +791,7 @@ call_kernel_with_dim(
                 colors.data_ptr<float>(),
                 normals.data_ptr<float>(),
                 opacities.data_ptr<float>(),
-                textures_packed.packed_accessor32<const float, 4, at::RestrictPtrTraits>(),
+                textures_packed.packed_accessor32<const float, 2, at::RestrictPtrTraits>(),
                 texture_dims.data_ptr<int32_t>(),
                 texture_offsets.data_ptr<int32_t>(),
                 backgrounds.has_value() ? backgrounds.value().data_ptr<float>()
@@ -821,7 +821,7 @@ call_kernel_with_dim(
                 v_ray_transforms.data_ptr<float>(),
                 v_colors.data_ptr<float>(),
                 v_opacities.data_ptr<float>(),
-                v_textures_packed.packed_accessor32<float, 4, at::RestrictPtrTraits>(),
+                v_textures_packed.packed_accessor32<float, 2, at::RestrictPtrTraits>(),
                 v_normals.data_ptr<float>(),
                 v_densify.data_ptr<float>()
             );
@@ -848,7 +848,7 @@ std::tuple<
     torch::Tensor,
     torch::Tensor,
     torch::Tensor>
-rasterize_to_pixels_bwd_textured_gaussians_tensor(
+rasterize_to_pixels_bwd_packed_textured_gaussians_tensor(
     // Gaussian parameters
     const torch::Tensor &means2d,   // [C, N, 2] or [nnz, 2]
     const torch::Tensor &ray_transforms,    // [C, N, 3, 3] or [nnz, 3, 3]

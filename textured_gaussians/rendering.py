@@ -1803,7 +1803,7 @@ def rasterization_packed_textured_gaussians(
     assert opacities.shape == (N,), opacities.shape
     assert viewmats.shape == (C, 4, 4), viewmats.shape
     assert Ks.shape == (C, 3, 3), Ks.shape
-    assert textures.shape[0] == N and textures.shape[-1] == 4 and textures.dim() == 4, textures.shape
+    # assert textures.shape[0] == N and textures.shape[-1] == 4 and textures.dim() == 4, textures.shape
     assert textures_packed.shape[0] == 4, textures_packed.shaape
     assert texture_dims.shape == (N, 2), texture_dims.shape
     assert texture_offsets.shape == (N, 1), texture_offsets.shape

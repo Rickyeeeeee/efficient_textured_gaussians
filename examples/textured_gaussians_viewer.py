@@ -14,7 +14,7 @@ import viser
 from pathlib import Path
 from textured_gaussians._helper import load_test_data
 from textured_gaussians.distributed import cli
-from textured_gaussians.rendering import rasterization, rasterization_2dgs, rasterization_textured_gaussians
+from textured_gaussians.rendering import rasterization, rasterization_2dgs, rasterization_textured_gaussians, rasterization_packed_textured_gaussians
 
 import nerfview
 
@@ -64,6 +64,7 @@ def main(local_rank: int, world_rank, world_size: int, args):
     slider_positions = [(i+1)*(1/num_ckpts) for i in range(num_ckpts-1)]
 
     means, quats, scales, opacities, sh0, shN, textures = [], [], [], [], [], [], []
+    textures_packed, texture_dims_list, texture_offsets_list = [], [], []
     for ckpt_path in args.ckpt:
         ckpt = torch.load(ckpt_path, map_location=device)["splats"]
         means.append(ckpt["means"])
@@ -72,7 +73,28 @@ def main(local_rank: int, world_rank, world_size: int, args):
         opacities.append(torch.sigmoid(ckpt["opacities"]))
         sh0.append(ckpt["sh0"])
         shN.append(ckpt["shN"])
-        textures.append(ckpt["textures"])
+        texture = ckpt["textures"]
+        textures.append(texture)
+
+        # Convert textures to packed format
+        # [N, W, H, C] -> [C, N*W*H]
+        # Construct the corresponding texture dimensions [N, 2] and offsets [N, 1]
+        texture_packed = texture.permute(3, 0, 1, 2).reshape(texture.shape[3], -1)
+        textures_packed.append(texture_packed)
+
+        N, W, H, C = texture.shape
+
+        # Texture dimensions: [N, 2] with [W, H]
+        dims = torch.tensor([[W, H]] * N, device=texture.device, dtype=torch.int32)
+        texture_dims_list.append(dims)
+
+        # Offsets: [N, 1] where each is cumulative sum of previous W*H
+        areas = dims[:, 0] * dims[:, 1]  # W * H for each texture -> [N]
+        offsets = torch.zeros_like(areas)
+        offsets[1:] = torch.cumsum(areas, dim=0)[:-1]
+        texture_offsets_list.append(offsets.unsqueeze(1))  # Make shape [N, 1]
+
+        
 
     colors = [None] * num_ckpts
     for i in range(num_ckpts):
@@ -99,13 +121,29 @@ def main(local_rank: int, world_rank, world_size: int, args):
 
         render_images = [None] * num_ckpts
         for i in range(num_ckpts):
-            render_colors, _, _, _, _, _, _, _, _ = rasterization_textured_gaussians(
+            # render_colors, _, _, _, _, _, _, _, _ = rasterization_textured_gaussians(
+            #     means=means[i],
+            #     quats=quats[i],
+            #     scales=scales[i],
+            #     opacities=opacities[i],
+            #     colors=colors[i],
+            #     textures=textures[i],
+            #     viewmats=torch.linalg.inv(c2w[None]),
+            #     Ks=K[None],
+            #     width=width,
+            #     height=height,
+            #     sh_degree=sh_degree
+            # )
+            render_colors, _, _, _, _, _, _, _, _ = rasterization_packed_textured_gaussians(
                 means=means[i],
                 quats=quats[i],
                 scales=scales[i],
                 opacities=opacities[i],
                 colors=colors[i],
-                textures=textures[i],
+                textures=None,
+                textures_packed=textures_packed[i],
+                texture_dims=texture_dims_list[i],
+                texture_offsets=texture_offsets_list[i],
                 viewmats=torch.linalg.inv(c2w[None]),
                 Ks=K[None],
                 width=width,

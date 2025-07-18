@@ -618,7 +618,7 @@ std::tuple<
     torch::Tensor,
     torch::Tensor,
     torch::Tensor>
-rasterize_to_pixels_bwd_textured_gaussians_tensor(
+rasterize_to_pixels_bwd_packed_textured_gaussians_tensor(
     // Gaussian parameters
     const torch::Tensor &means2d,   // [C, N, 2] or [nnz, 2]
     const torch::Tensor &ray_transforms,    // [C, N, 3, 3] or [nnz, 3, 3]
