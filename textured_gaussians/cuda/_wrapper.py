@@ -2630,7 +2630,7 @@ class _RasterizeToPixelsPackedTexturedGaussians(torch.autograd.Function):
             v_ray_transforms,
             v_colors,
             v_opacities,
-            v_textures,
+            v_textures_packed,
             v_normals,
             v_densify,
         ) = _make_lazy_cuda_func("rasterize_to_pixels_bwd_packed_textured_gaussians")(
@@ -2665,7 +2665,7 @@ class _RasterizeToPixelsPackedTexturedGaussians(torch.autograd.Function):
         if absgrad:
             means2d.absgrad = v_means2d_abs
 
-        if ctx.needs_input_grad[7]:
+        if ctx.needs_input_grad[10]:
             v_backgrounds = (v_render_colors * (1.0 - render_alphas).float()).sum(
                 dim=(1, 2)
             )
@@ -2677,7 +2677,9 @@ class _RasterizeToPixelsPackedTexturedGaussians(torch.autograd.Function):
             v_ray_transforms,
             v_colors,
             v_opacities,
-            v_textures,
+            v_textures_packed,
+            None,
+            None,
             v_normals,
             v_densify,
             v_backgrounds,

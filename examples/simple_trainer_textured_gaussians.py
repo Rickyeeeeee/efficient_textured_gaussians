@@ -31,7 +31,7 @@ from utils import (
     set_random_seed,
 )
 
-from textured_gaussians.rendering import rasterization_2dgs, rasterization_textured_gaussians
+from textured_gaussians.rendering import rasterization_2dgs, rasterization_textured_gaussians, rasterization_packed_textured_gaussians
 from textured_gaussians.strategy import DefaultStrategy, MCMCStrategy
 
 
@@ -279,6 +279,8 @@ def create_splats_with_optimizers(
         ("opacities", torch.nn.Parameter(opacities), 5e-2),
     ]
 
+    constants = {}
+
     # SH coefficients
     if feature_dim is None:
         # color is SH coefficients.
@@ -303,6 +305,26 @@ def create_splats_with_optimizers(
         textures[:, :, :, 3] = 1.0 # init alpha to 1.0
         params.append(("textures", torch.nn.Parameter(textures), 2.5e-3))
 
+        N, H, W, C = textures.shape
+        assert C == 4, "Expected 4 channels (RGBA)"
+        textures_rgb = textures[:, :, :, :4]  # (N, H, W, 3)
+
+        # Rearrange to (N, 3, H, W) then flatten to pack all textures
+        textures_rgb = textures_rgb.permute(0, 3, 1, 2).contiguous()  # (N, 3, H, W)
+        textures_packed = textures_rgb.reshape(4, -1)  # (3, N*H*W)
+
+        # Texture dimensions per texture (same for all)
+        texture_dims = torch.tensor([[W, H]] * N, dtype=torch.int32, requires_grad=False, device=device)
+
+        # Compute offsets for each texture in packed array
+        pixels_per_texture = H * W
+        texture_offsets = torch.arange(N, dtype=torch.int32, requires_grad=False, device=device).unsqueeze(1) * pixels_per_texture  # (N, 1)
+
+        params.append(("textures_packed", torch.nn.Parameter(textures_packed), 2.5e-3))
+        constants["texture_dims"] = texture_dims
+        constants["texture_offsets"] = texture_offsets
+
+
     splats = torch.nn.ParameterDict({n: v for n, v, _ in params}).to(device)
     # Scale learning rate based on batch size, reference:
     # https://www.cs.princeton.edu/~smalladi/blog/2024/01/22/SDEs-ScalingRules/
@@ -316,7 +338,7 @@ def create_splats_with_optimizers(
         )
         for name, _, lr in params
     }
-    return splats, optimizers
+    return splats, optimizers, constants
 
 
 class Runner:
@@ -373,7 +395,7 @@ class Runner:
 
         # Model
         feature_dim = 32 if cfg.app_opt else None
-        self.splats, self.optimizers = create_splats_with_optimizers(
+        self.splats, self.optimizers, self.constants = create_splats_with_optimizers(
             self.parser,
             self.cfg,
             init_type=cfg.init_type,
@@ -483,6 +505,22 @@ class Runner:
         textures = textures.clamp(0.0, 1.0)
         return textures
 
+    def get_textures_packed(self):
+        # textures_packed: [3, \sum(N_i * H_i * W_i)]
+        textures_packed = self.splats["textures_packed"]
+        if not self.cfg.textured_rgb:
+            rgb_textures = torch.zeros_like(textures_packed[:3, :]) # [3, \sum(N_i * H_i * W_i)]
+        else:
+            rgb_textures = textures_packed[:3, :]
+        if not self.cfg.textured_alpha:
+            alpha_textures = torch.ones_like(textures_packed[3:4, :])
+        else:
+            alpha_textures = textures_packed[3:4, :]
+            alpha_textures = alpha_textures / (alpha_textures.amax(dim=1, keepdim=True) + 1e-6) # normalize so that the max is 1
+        textures_packed = torch.cat([rgb_textures, alpha_textures], dim=0) # [4, \sum(N_i * H_i * W_i)]
+        textures_packed = textures_packed.clamp(0.0, 1.0)
+        return textures_packed
+
     def rasterize_splats(
         self,
         camtoworlds: Tensor,
@@ -543,6 +581,7 @@ class Runner:
             )
         elif self.model_type == "textured_gaussians":
             textures = self.get_textures()
+            textures_packed = self.get_textures_packed()
             (
                 render_colors,
                 render_alphas,
@@ -553,13 +592,16 @@ class Runner:
                 _,
                 _,
                 info,
-            ) = rasterization_textured_gaussians(
+            ) = rasterization_packed_textured_gaussians(
                 means=means,
                 quats=quats,
                 scales=scales,
                 opacities=opacities,
                 colors=colors,
                 textures=textures,
+                textures_packed=textures_packed,  # [3, \sum(N_i * H_i * W_i)]
+                texture_dims=self.constants["texture_dims"],  # [N, 2]
+                texture_offsets= self.constants["texture_offsets"],  # [N, 1]
                 viewmats=torch.linalg.inv(camtoworlds),  # [C, 4, 4]
                 Ks=Ks,  # [C, 3, 3]
                 width=width,
