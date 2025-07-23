@@ -134,7 +134,7 @@ def main(local_rank: int, world_rank, world_size: int, args):
             #     height=height,
             #     sh_degree=sh_degree
             # )
-            render_colors, _, _, _, _, _, _, _, _ = rasterization_packed_textured_gaussians(
+            render_colors, *_ = rasterization_packed_textured_gaussians(
                 means=means[i],
                 quats=quats[i],
                 scales=scales[i],
