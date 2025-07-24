@@ -2,10 +2,11 @@ import argparse
 import math
 import os
 import time
+import random
 from typing import Tuple, Dict
 
 import imageio
-import numpy as np
+import plotly.express as px
 import torch
 import torch.nn.functional as F
 from torch import Tensor
@@ -19,9 +20,11 @@ from textured_gaussians.rendering import rasterization, rasterization_2dgs, rast
 import nerfview
 
 class CustomViewer(nerfview.Viewer):
-    def __init__(self, init_dict, callback_dict, *args, **kwargs):
+    def __init__(self, init_dict, callback_dict, plots, plots_checkboxes, *args, **kwargs):
         self.callback_dict = callback_dict
         self.init_dict = init_dict
+        self.plots = plots
+        self.plots_checkboxes = plots_checkboxes
         super().__init__(*args, **kwargs)
 
     def _init_rendering_tab(self):
@@ -39,6 +42,23 @@ class CustomViewer(nerfview.Viewer):
                     callback(slider.value)
                     self.rerender(_)
 
+            def make_on_update_checkbox(checkbox, plot):
+                @checkbox.on_update
+                def on_update(_) -> None:
+                    plot.visible = checkbox.value
+                    self.rerender(_)
+            x = torch.randn(1000, 1)
+            x_np = x.view(-1).numpy()
+            fig = px.histogram(x_np, nbins=30, title="Histogram of Tensor Values")
+            fig.update_layout(margin=dict(l=10, r=10, t=30, b=10))
+
+            self.server.gui.add_markdown("### Plots")
+            for name in list(self.plots.keys()):
+                checkbox = self.server.gui.add_checkbox(label=name, initial_value=False)
+                plot = self.server.gui.add_plotly(figure=fig, aspect=1, visible=False)
+                make_on_update_checkbox(checkbox=checkbox, plot=plot)
+                self.plots[name] = plot
+                self.plots_checkboxes[name] = checkbox
 
             for i, (callback, initial_value) in enumerate(zip(self.callback_dict["sliders"], self.init_dict["sliders"])):
                 slider = self.server.gui.add_slider(
@@ -103,23 +123,48 @@ def main(local_rank: int, world_rank, world_size: int, args):
     
     print("Number of Gaussians:", len(means))
 
+    plots = {
+        'gs_contrib_sum': None,
+        'gs_contrib_count': None,
+        'gs_weight_sum': None,
+        'gs_dx_sum': None,
+        'gs_dy_sum': None
+    }
+
+    plots_checkboxes = {
+        'gs_contrib_sum': None,
+        'gs_contrib_count': None,
+        'gs_weight_sum': None,
+        'gs_dx_sum': None,
+        'gs_dy_sum': None
+    }
     # register and open viewer
     def viewer_render_fn(
         camera_state: nerfview.CameraState, render_tab_state: nerfview.RenderTabState
     ):
         """Callable function for the viewer."""
-        if render_tab_state.preview_render:
-            width = render_tab_state.render_width
-            height = render_tab_state.render_height
-        else:
-            width = render_tab_state.viewer_width
-            height = render_tab_state.viewer_height
+        # if render_tab_state.preview_render:
+        #     width = render_tab_state.render_width
+        #     height = render_tab_state.render_height
+        # else:
+            # width = render_tab_state.viewer_width
+            # height = render_tab_state.viewer_height
 
+        width = render_tab_state.render_width
+        height = render_tab_state.render_height
+        
         # convert to float32
         c2w = torch.tensor(camera_state.c2w).to(device, dtype=torch.float32)
         K = torch.tensor(camera_state.get_K([width, height])).to(device, dtype=torch.float32)
 
         render_images = [None] * num_ckpts
+        metrics = {
+            "gs_contrib_sum": [None] * num_ckpts,
+            "gs_contrib_count": [None] * num_ckpts,
+            "gs_weight_sum": [None] * num_ckpts,
+            "gs_dx_sum": [None] * num_ckpts,
+            "gs_dy_sum": [None] * num_ckpts
+        }
         for i in range(num_ckpts):
             # render_colors, _, _, _, _, _, _, _, _ = rasterization_textured_gaussians(
             #     means=means[i],
@@ -134,7 +179,7 @@ def main(local_rank: int, world_rank, world_size: int, args):
             #     height=height,
             #     sh_degree=sh_degree
             # )
-            render_colors, *_ = rasterization_packed_textured_gaussians(
+            render_colors, *_, gs_contrib_sum, gs_contrib_count, gs_weight_sum, gs_dx_sum, gs_dy_sum, meta, = rasterization_packed_textured_gaussians(
                 means=means[i],
                 quats=quats[i],
                 scales=scales[i],
@@ -151,6 +196,32 @@ def main(local_rank: int, world_rank, world_size: int, args):
                 sh_degree=sh_degree
             )
             render_images[i] = render_colors
+            metrics['gs_contrib_count'][i] = gs_contrib_count
+            metrics['gs_contrib_sum'][i] = gs_contrib_sum
+            metrics['gs_weight_sum'][i] = gs_weight_sum
+            metrics['gs_dx_sum'][i] = gs_dx_sum
+            metrics['gs_dy_sum'][i] = gs_dy_sum
+
+        def get_contrib_sum_plot(histc_input, title="gs_contrib_sum", min_val=1.0, max_val=5000, bins=100):
+            with torch.no_grad():
+                hist = torch.histc(histc_input, bins=bins, min=min_val, max=max_val).cpu().detach().numpy()
+
+            bin_edges = torch.linspace(min_val, max_val, steps=bins + 1).cpu().numpy()
+            bin_centers = 0.5 * (bin_edges[:-1] + bin_edges[1:])
+
+            fig = px.histogram(
+                x=bin_centers,
+                y=hist,
+                nbins=bins,
+                labels={'x': 'Value', 'y': 'Count'},
+                title=title
+            )
+            return fig.update_layout(margin=dict(l=10, r=10, t=30, b=10))
+        
+        for name, plot in plots.items():
+            value = plots_checkboxes[name].value
+            if plots_checkboxes[name].value:
+                plot.figure = get_contrib_sum_plot(metrics[name][0], name)
 
         # All images must have the same shape
         H, W, C = render_images[0][0].shape
@@ -187,6 +258,8 @@ def main(local_rank: int, world_rank, world_size: int, args):
         callback_dict={
             "sliders": slider_callbacks,
         },
+        plots=plots,
+        plots_checkboxes=plots_checkboxes,
         server=server,
         render_fn=viewer_render_fn,
         mode="rendering",
