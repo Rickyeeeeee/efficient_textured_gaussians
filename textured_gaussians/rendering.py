@@ -1693,7 +1693,7 @@ def rasterization_packed_textured_gaussians(
     distloss: bool = False,
     depth_mode: Literal["expected", "median"] = "expected",
     gs_contrib_threshold: float = 0.0,
-) -> Tuple[Tensor, Tensor, Tensor, Tensor, Tensor, Tensor, Dict]:
+) -> Tuple[Tensor, Tensor, Tensor, Tensor, Tensor, Tensor, Tensor, Tensor, Tensor, Tensor, Tensor, Dict]:
     """Rasterize a set of 2D Gaussians (N) to a batch of image planes (C).
 
     This function supports a handful of features, similar to the :func:`rasterization` function.
@@ -1924,7 +1924,10 @@ def rasterization_packed_textured_gaussians(
         render_distort,
         render_median,
         gs_contrib_sum,
-        gs_contrib_count
+        gs_contrib_count,
+        gs_weight_sum,
+        gs_dx_sum,
+        gs_dy_sum
     ) = rasterize_to_pixels_packed_textured_gaussians(
         means2d,
         ray_transforms,
@@ -2003,6 +2006,9 @@ def rasterization_packed_textured_gaussians(
         render_median,
         gs_contrib_sum,
         gs_contrib_count,
+        gs_weight_sum,
+        gs_dx_sum,
+        gs_dy_sum,
         meta,
     )
 

@@ -2015,7 +2015,10 @@ def rasterize_to_pixels_packed_textured_gaussians(
         render_distort,
         render_median,
         gs_contrib_sum, # added
-        gs_contrib_count # added
+        gs_contrib_count, # added
+        gs_weight_sum,
+        gs_dx_sum,
+        gs_dy_sum
     ) = _RasterizeToPixelsPackedTexturedGaussians.apply(
         means2d.contiguous(),
         ray_transforms.contiguous(),
@@ -2048,7 +2051,10 @@ def rasterize_to_pixels_packed_textured_gaussians(
         render_distort, 
         render_median, 
         gs_contrib_sum, 
-        gs_contrib_count
+        gs_contrib_count,
+        gs_weight_sum,
+        gs_dx_sum,
+        gs_dy_sum
     )
 
 
@@ -2532,6 +2538,9 @@ class _RasterizeToPixelsPackedTexturedGaussians(torch.autograd.Function):
             median_ids,
             gs_contrib_sum, # added
             gs_contrib_count, # added
+            gs_weight_sum,
+            gs_dx_sum,
+            gs_dy_sum
         ) = _make_lazy_cuda_func("rasterize_to_pixels_fwd_packed_textured_gaussians")(
             means2d,
             ray_transforms,
@@ -2586,6 +2595,9 @@ class _RasterizeToPixelsPackedTexturedGaussians(torch.autograd.Function):
             render_median,
             gs_contrib_sum,
             gs_contrib_count,
+            gs_weight_sum,
+            gs_dx_sum,
+            gs_dy_sum
         )
 
     @staticmethod

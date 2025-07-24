@@ -56,7 +56,10 @@ __global__ void rasterize_to_pixels_fwd_packed_textured_gaussians_kernel(
     int32_t *__restrict__ last_ids, // [C, image_height, image_width]     // Stores the index of the last Gaussian that contributed to each pixel.
     int32_t *__restrict__ median_ids, // [C, image_height, image_width]    // Stores the index of the Gaussian that contributes to the median depth for each pixel (bring over 0.5).
     S *__restrict__ gs_contrib_sum,
-    S *__restrict__ gs_contrib_count
+    S *__restrict__ gs_contrib_count,
+    S *__restrict__ gs_weight_sum,
+    S *__restrict__ gs_dx_sum,
+    S *__restrict__ gs_dy_sum
 ) {
     // each thread draws one pixel, but also timeshares caching gaussians in a
     // shared tile
@@ -370,7 +373,7 @@ __global__ void rasterize_to_pixels_fwd_packed_textured_gaussians_kernel(
                 // in nerfacc, loss_bi_0 = weights * t_mids *
                 // exclusive_sum(weights)
                 const S distort_bi_0 = vis * depth * (1.0f - T);
-                // in nerfacc, loss_bi_1 = weights * exclusive_sum(weights *
+                // in nerfacc, loss_bi_1 = weights * exclusive_sum(weights *_
                 // t_mids)
                 const S distort_bi_1 = vis * accum_vis_depth;
                 distort += 2.0f * (distort_bi_0 - distort_bi_1);
@@ -391,6 +394,9 @@ __global__ void rasterize_to_pixels_fwd_packed_textured_gaussians_kernel(
             if (alpha > gs_contrib_threshold) {
                 atomicAdd(&gs_contrib_sum[g], alpha);
                 atomicAdd(&gs_contrib_count[g], 1.0f);
+                atomicAdd(&gs_weight_sum[g], vis);
+                atomicAdd(&gs_dx_sum[g], s.x * s.x);
+                atomicAdd(&gs_dy_sum[g], s.y * s.y);
             }
         }
     }
@@ -427,6 +433,9 @@ __global__ void rasterize_to_pixels_fwd_packed_textured_gaussians_kernel(
 
 template <uint32_t CDIM>
 std::tuple<
+    torch::Tensor,
+    torch::Tensor,
+    torch::Tensor,
     torch::Tensor,
     torch::Tensor,
     torch::Tensor,
@@ -528,6 +537,21 @@ call_kernel_with_dim(
         means2d.options().dtype(torch::kFloat32)
     );
 
+    torch::Tensor gs_weight_sum = torch::zeros(
+        {N},
+        means2d.options().dtype(torch::kFloat32)
+    );
+
+    torch::Tensor gs_dx_sum = torch::zeros(
+        {N},
+        means2d.options().dtype(torch::kFloat32)
+    );
+
+    torch::Tensor gs_dy_sum = torch::zeros(
+        {N},
+        means2d.options().dtype(torch::kFloat32)
+    );
+
     at::cuda::CUDAStream stream = at::cuda::getCurrentCUDAStream();
     const uint32_t shared_mem =
         tile_size * tile_size *
@@ -581,7 +605,10 @@ call_kernel_with_dim(
             last_ids.data_ptr<int32_t>(),
             median_ids.data_ptr<int32_t>(),
             gs_contrib_sum.data_ptr<float>(),
-            gs_contrib_count.data_ptr<float>()
+            gs_contrib_count.data_ptr<float>(),
+            gs_weight_sum.data_ptr<float>(),
+            gs_dx_sum.data_ptr<float>(),
+            gs_dy_sum.data_ptr<float>()
         );
 
     return std::make_tuple(
@@ -593,11 +620,17 @@ call_kernel_with_dim(
         last_ids,
         median_ids,
         gs_contrib_sum,
-        gs_contrib_count
+        gs_contrib_count,
+        gs_weight_sum,
+        gs_dx_sum,
+        gs_dy_sum
     );
 }
 
 std::tuple<
+    torch::Tensor,
+    torch::Tensor,
+    torch::Tensor,
     torch::Tensor,
     torch::Tensor,
     torch::Tensor,

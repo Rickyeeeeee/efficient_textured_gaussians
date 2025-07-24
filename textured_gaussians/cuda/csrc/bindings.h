@@ -586,6 +586,9 @@ std::tuple<
     torch::Tensor,
     torch::Tensor,
     torch::Tensor,
+    torch::Tensor,
+    torch::Tensor,
+    torch::Tensor,
     torch::Tensor>
 rasterize_to_pixels_fwd_packed_textured_gaussians_tensor(
     // Gaussian parameters
