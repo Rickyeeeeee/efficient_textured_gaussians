@@ -15,6 +15,8 @@ from torch import Tensor
 import tqdm
 import viser
 from pathlib import Path
+import plotly.graph_objects as go
+import plotly.subplots as sp
 from datasets.colmap import Dataset, Parser, BlenderDataset
 from textured_gaussians._helper import load_test_data
 from textured_gaussians.distributed import cli
@@ -58,6 +60,16 @@ plots_checkboxes = {
     'gs_dy_sum': None
 }
 
+debug_train_image_gt: np.array = None
+debug_train_image_render: np.array = None
+debug_model_idx = 0
+debug_val_image_gt: np.array = None
+debug_val_image_render: np.array = None
+render_train: callable = None
+render_val: callable = None
+gt_train: callable = None
+gt_val: callable = None
+
 class CustomViewer(UtilViewer):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
@@ -66,11 +78,57 @@ class CustomViewer(UtilViewer):
         super()._init_rendering_tab()
         self._custom_render_handles = {}
         self._custom_rendering_folder = self.server.gui.add_folder("Custom Rendering")
+        self.train_plot_handle = None
+        self.train_plot_handle = None
+
+    def update_frustum_callback(self):
+        def train_frustum_render_callback(frustum: viser.CameraFrustumHandle, idx):
+            @frustum.on_click
+            def _(_) -> None:
+                global debug_train_image_gt
+                debug_train_image_gt = gt_train(idx) / 255.0
+                debug_train_image_gt = np.flip(debug_train_image_gt, axis=(0))
+
+                global debug_train_image_render
+                debug_train_image_render = np.clip(render_train(idx), 0.0, 1.0)
+                debug_train_image_render = np.flip(debug_train_image_render, axis=(0))
+
+                diff = np.abs(debug_train_image_gt - debug_train_image_render)
+                image_stack = np.array([debug_train_image_gt, debug_train_image_render, np.sqrt(diff)])
+                # Create subplot figure
+                fig = px.imshow(image_stack, facet_col_wrap=2, facet_col=0)
+
+                self.train_plot_handle.figure = fig
+
+        for i, frustum in enumerate(self.train_frustums):
+            train_frustum_render_callback(frustum=frustum, idx=i)
+
+        def val_frustum_render_callback(frustum: viser.CameraFrustumHandle, idx):
+            @frustum.on_click
+            def _(_) -> None:
+                global debug_val_image_gt
+                debug_val_image_gt = gt_val(idx) / 255.0
+                debug_val_image_gt = np.flip(debug_val_image_gt, axis=(0))
+
+                global debug_val_image_render
+                debug_val_image_render = np.clip(render_val(idx), 0.0, 1.0)
+                debug_val_image_render = np.flip(debug_val_image_render, axis=(0))
+
+                diff = np.abs(debug_val_image_gt - debug_val_image_render)
+                image_stack = np.array([debug_val_image_gt, debug_val_image_render, np.sqrt(diff)])
+                # Create subplot figure
+                fig = px.imshow(image_stack, facet_col_wrap=2, facet_col=0)
+
+                self.test_plot_handle.figure = fig
+
+        for i, frustum in enumerate(self.val_frustums):
+            val_frustum_render_callback(frustum=frustum, idx=i)
 
     def _populate_rendering_tab(self):
         super()._populate_rendering_tab()
 
         with self._custom_rendering_folder:
+
             def make_on_update(callback, slider):
                 @slider.on_update
                 def on_update(_) -> None:
@@ -108,6 +166,13 @@ class CustomViewer(UtilViewer):
                 make_on_update(callback, slider)
 
                 self._custom_render_handles[f"Slider {i+1}"] = slider
+
+            self.train_plot_handle = self.server.gui.add_plotly(
+                figure=go.Figure()
+            )
+            self.val_plot_handle = self.server.gui.add_plotly(
+                figure=go.Figure()
+            )
 
 
 def main(local_rank: int, world_rank, world_size: int, args):
@@ -288,6 +353,71 @@ def main(local_rank: int, world_rank, world_size: int, args):
 
         return final_image.cpu().detach().numpy()
 
+    def train_render_fn(idx):
+        data = trainset[idx]
+        K = data['K'].cuda()
+        c2w = data['camtoworld'].cuda()
+        image = data['image'].cuda()
+        h, w = image.shape[0], image.shape[1]
+        model = textured_gaussian_models[debug_model_idx]
+        render_colors, *_ = rasterization_packed_textured_gaussians(
+            means=model.means,
+            quats=model.quats,
+            scales=model.scales,
+            opacities=model.opacities,
+            colors=model.colors,
+            textures=None,
+            textures_packed=model.textures_packed,
+            texture_dims=model.texture_dims,
+            texture_offsets=model.texture_offsets,
+            viewmats=torch.linalg.inv(c2w[None]),
+            Ks=K[None],
+            width=w,
+            height=h,
+            sh_degree=sh_degree
+        )
+        return render_colors.squeeze(0).detach().cpu().numpy()
+    
+    global render_train
+    render_train = train_render_fn
+
+    def val_render_fn(idx):
+        data = valset[idx]
+        K = data['K']
+        c2w = data['camtoworld']
+        image = data['image']
+        h , w = image.shape[0], image.shape[1]
+        model = textured_gaussian_models[debug_model_idx]
+        render_colors, *_ = rasterization_packed_textured_gaussians(
+            means=model.means,
+            quats=model.quats,
+            scales=model.scales,
+            opacities=model.opacities,
+            colors=model.colors,
+            textures=None,
+            textures_packed=model.textures_packed,
+            texture_dims=model.texture_dims,
+            texture_offsets=model.texture_offsets,
+            viewmats=torch.linalg.inv(c2w[None]),
+            Ks=K[None],
+            width=w,
+            height=h,
+            sh_degree=sh_degree
+        )
+        return render_colors.squeeze(0).detach().cpu().numpy()
+    global render_val
+    render_val = val_render_fn
+
+    def train_gt_fn(idx):
+        return trainset[idx]['image'].detach().cpu().numpy()
+    global gt_train
+    gt_train = train_gt_fn
+
+    def val_gt_fn(idx):
+        return valset[idx]['image'].detach().cpu().numpy()
+    global gt_val
+    gt_val = val_gt_fn
+
     def make_update_slider(idx: int):
         def update_slider(value: float):
             slider_positions[idx] = value
@@ -304,6 +434,7 @@ def main(local_rank: int, world_rank, world_size: int, args):
     )
     print("Viewer running... Ctrl+C to exit.")
     viewer.custom_update(train_dataset=trainset, val_dataset=valset)
+    viewer.update_frustum_callback()
     # cam0 = trainset[0]
     # K = cam0["K"]
     # image = cam0['image']
