@@ -2610,6 +2610,9 @@ class _RasterizeToPixelsPackedTexturedGaussians(torch.autograd.Function):
         v_render_median: Tensor,
         v_gs_contrib_sum: Tensor, # added
         v_gs_contrib_count: Tensor, # added
+        gs_weight_sum: Tensor,
+        gs_dx_sum: Tensor,
+        gs_dy_sum: Tensor
     ):
 
         (

@@ -376,6 +376,7 @@ class Dataset:
             "camtoworld": torch.from_numpy(camtoworlds).float(),
             "image": torch.from_numpy(image).float(),
             "image_id": item,  # the index of the image in the dataset
+            "image_name": self.parser.image_names[item]
         }
         if mask is not None:
             data["mask"] = torch.from_numpy(mask).bool()

@@ -5,6 +5,7 @@ import time
 from dataclasses import dataclass, field
 from typing import Dict, List, Literal, Optional, Tuple, Union
 from typing_extensions import assert_never
+from itertools import tee
 
 import imageio
 import nerfview
@@ -529,9 +530,9 @@ class Runner:
         
         texture_dims = new_dims
         
-        texture_areas = texture_dims[...,0] * texture_dims[...,1]
+        texture_areas = (texture_dims[...,0] * texture_dims[...,1]).unsqueeze(-1)
         texture_offsets = torch.zeros_like(self.constants['texture_offsets'])
-        texture_offsets[1:,...] = torch.cumsum(input=texture_areas, dim=-1)[:-1,...]
+        texture_offsets[1:,...] = (torch.cumsum(input=texture_areas, dim=0))[:-1,...]
 
         textures_src: Tensor = self.splats['textures_packed']
         textures_dst = torch.zeros((4, texture_areas[-1,0]))
@@ -589,6 +590,8 @@ class Runner:
 
         assert self.cfg.antialiased is False, "Antialiased is not supported for 2DGS"
 
+        extra = {}
+
         if self.model_type == "2dgs":
             (
                 render_colors,
@@ -625,11 +628,11 @@ class Runner:
                 normals_from_depth,
                 render_distort,
                 render_median,
-                _,
-                _,
-                _,
-                _,
-                _,
+                gs_contrib_count,
+                gs_contrib_sum,
+                gs_weight_sum,
+                gs_dx_sum,
+                gs_dy_sum,
                 info,
             ) = rasterization_packed_textured_gaussians(
                 means=means,
@@ -650,6 +653,11 @@ class Runner:
                 sparse_grad=self.cfg.sparse_grad,
                 **kwargs,
             )
+            extra['gs_contrib_count'] = gs_contrib_count
+            extra['gs_contrib_sum'] = gs_contrib_sum
+            extra['gs_weight_sum'] = gs_weight_sum
+            extra['gs_dx_sum'] = gs_dx_sum
+            extra['gs_dy_sum'] = gs_dy_sum
         return (
             render_colors,
             render_alphas,
@@ -657,8 +665,7 @@ class Runner:
             normals_from_depth,
             render_distort,
             render_median,
-            _,
-            _,
+            extra,
             info,
         )
 
@@ -699,7 +706,16 @@ class Runner:
             persistent_workers=True,
             pin_memory=True,
         )
-        trainloader_iter = iter(trainloader)
+        it = iter(trainloader)
+        trainloader_iter, trainloader_iter_copy = tee(it)
+
+        accumulated_stats = {
+            'gs_contrib_count': torch.zeros_like(self.splats['opacities']),
+            'gs_contrib_sum': torch.zeros_like(self.splats['opacities']),
+            'gs_weight_sum': torch.zeros_like(self.splats['opacities']),
+            'gs_dx_sum': torch.zeros_like(self.splats['opacities']),
+            'gs_dy_sum': torch.zeros_like(self.splats['opacities']),
+        }
 
         # Training loop.
         global_tic = time.time()
@@ -755,8 +771,7 @@ class Runner:
                 normals_from_depth,
                 render_distort,
                 render_median,
-                _,
-                _,
+                extra,
                 info,
             ) = self.rasterize_splats(
                 camtoworlds=camtoworlds,
@@ -786,6 +801,14 @@ class Runner:
                     colors = colors + 0.0 * (1.0 - alphas)
                 else:
                     raise ValueError(f"Background mode {cfg.background_mode} not supported!")
+
+            # record extras
+            with torch.no_grad():
+                accumulated_stats['gs_contrib_count'] += extra['gs_contrib_count']
+                accumulated_stats['gs_contrib_sum'] += extra['gs_contrib_sum']
+                accumulated_stats['gs_weight_sum'] += extra['gs_weight_sum']
+                accumulated_stats['gs_dx_sum'] += extra['gs_dx_sum']
+                accumulated_stats['gs_dy_sum'] += extra['gs_dy_sum']
 
             self.strategy.step_pre_backward(
                 params=self.splats,
@@ -920,6 +943,21 @@ class Runner:
             else:
                 assert_never(self.cfg.strategy)
 
+            # Texture-update post-backwrard strategies
+            # if step % 10 == 0:
+            #     target_stat = accumulated_stats["gs_weight_sum"] / 10.0
+            #     median = target_stat.median()
+            #     impor_idx = target_stat > median
+
+            #     texture_dims = self.constants['texture_dims'].clone()
+            #     texture_dims[~impor_idx] = torch.tensor([8, 8], device=texture_dims.device, dtype=torch.int)
+            #     texture_dims[impor_idx] = torch.tensor([16, 16], device=texture_dims.device, dtype=torch.int)
+
+            #     self.resize_textures_packed(texture_dims)
+
+            #     # Reset accumulation
+            #     accumulated_stats = {k: torch.zeros_like(self.splats['opacities']) for k in accumulated_stats}
+
             # Turn Gradients into Sparse Tensor before running optimizer
             if cfg.sparse_grad:
                 assert cfg.packed, "Sparse gradients only work with packed mode."
@@ -1010,7 +1048,6 @@ class Runner:
                 normals_from_depth,
                 render_distort,
                 render_median,
-                _,
                 _,
                 _,
             ) = self.rasterize_splats(
@@ -1165,7 +1202,7 @@ class Runner:
 
         canvas_all = []
         for i in tqdm.trange(len(camtoworlds), desc="Rendering trajectory"):
-            renders, _, _, surf_normals, _, _, _, _, _ = self.rasterize_splats(
+            renders, _, _, surf_normals, _, _, _, _ = self.rasterize_splats(
                 camtoworlds=camtoworlds[i : i + 1],
                 Ks=K[None],
                 width=width,
@@ -1210,7 +1247,7 @@ class Runner:
         c2w = torch.from_numpy(c2w).float().to(self.device)
         K = torch.from_numpy(K).float().to(self.device)
 
-        render_colors, _, _, _, _, _, _, _, _ = self.rasterize_splats(
+        render_colors, _, _, _, _, _, _, _ = self.rasterize_splats(
             camtoworlds=c2w[None],
             Ks=K[None],
             width=W,

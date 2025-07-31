@@ -3,28 +3,63 @@ import math
 import os
 import time
 import random
-from typing import Tuple, Dict
+from typing import List, Tuple, Dict
+from dataclasses import dataclass
 
 import imageio
 import plotly.express as px
+import numpy as np
 import torch
 import torch.nn.functional as F
 from torch import Tensor
 import tqdm
 import viser
 from pathlib import Path
+from datasets.colmap import Dataset, Parser, BlenderDataset
 from textured_gaussians._helper import load_test_data
 from textured_gaussians.distributed import cli
 from textured_gaussians.rendering import rasterization, rasterization_2dgs, rasterization_textured_gaussians, rasterization_packed_textured_gaussians
+from util_viewer import UtilViewer
 
 import nerfview
 
-class CustomViewer(nerfview.Viewer):
-    def __init__(self, init_dict, callback_dict, plots, plots_checkboxes, *args, **kwargs):
-        self.callback_dict = callback_dict
-        self.init_dict = init_dict
-        self.plots = plots
-        self.plots_checkboxes = plots_checkboxes
+@dataclass
+class TexturedGaussiansModel:
+    means: Tensor
+    quats: Tensor
+    scales: Tensor
+    opacities: Tensor
+    colors: Tensor
+    textures: Tensor
+    sh0: Tensor
+    shN: Tensor
+    textures_packed: Tensor
+    texture_dims: Tensor
+    texture_offsets: Tensor
+
+textured_gaussian_models: List[TexturedGaussiansModel] = []
+
+slider_positions: List[float] = []
+slider_callbacks: List = []
+
+plots = {
+    'gs_contrib_sum': None,
+    'gs_contrib_count': None,
+    'gs_weight_sum': None,
+    'gs_dx_sum': None,
+    'gs_dy_sum': None
+}
+
+plots_checkboxes = {
+    'gs_contrib_sum': None,
+    'gs_contrib_count': None,
+    'gs_weight_sum': None,
+    'gs_dx_sum': None,
+    'gs_dy_sum': None
+}
+
+class CustomViewer(UtilViewer):
+    def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
 
     def _init_rendering_tab(self):
@@ -53,14 +88,14 @@ class CustomViewer(nerfview.Viewer):
             fig.update_layout(margin=dict(l=10, r=10, t=30, b=10))
 
             self.server.gui.add_markdown("### Plots")
-            for name in list(self.plots.keys()):
+            for name in list(plots.keys()):
                 checkbox = self.server.gui.add_checkbox(label=name, initial_value=False)
                 plot = self.server.gui.add_plotly(figure=fig, aspect=1, visible=False)
                 make_on_update_checkbox(checkbox=checkbox, plot=plot)
-                self.plots[name] = plot
-                self.plots_checkboxes[name] = checkbox
+                plots[name] = plot
+                plots_checkboxes[name] = checkbox
 
-            for i, (callback, initial_value) in enumerate(zip(self.callback_dict["sliders"], self.init_dict["sliders"])):
+            for i, (callback, initial_value) in enumerate(zip(slider_callbacks, slider_positions)):
                 slider = self.server.gui.add_slider(
                     f"Slider {i+1}",
                     min=0.0,
@@ -74,70 +109,93 @@ class CustomViewer(nerfview.Viewer):
 
                 self._custom_render_handles[f"Slider {i+1}"] = slider
 
+
 def main(local_rank: int, world_rank, world_size: int, args):
+    global textured_gaussian_models, slider_positions, slider_callbacks
     torch.manual_seed(42)
 
     device = torch.device("cuda", local_rank)
     
     num_ckpts = len(args.ckpt)
 
-    slider_positions = [(i+1)*(1/num_ckpts) for i in range(num_ckpts-1)]
+    slider_positions.clear()
+    slider_positions.extend([(i+1)*(1/num_ckpts) for i in range(num_ckpts-1)])
+    parser = None
 
-    means, quats, scales, opacities, sh0, shN, textures = [], [], [], [], [], [], []
-    textures_packed, texture_dims_list, texture_offsets_list = [], [], []
+    trainset = None
+    valset = None
+
+    # Load data: Training data should contain initial points and colors.
+    if args.dataset == "colmap":
+        parser = Parser(
+            data_dir=args.data_dir,
+            factor=args.data_factor,
+            normalize=True,
+            test_every=args.test_every,
+        )
+        trainset = Dataset(
+            parser,
+            split="train",
+        )
+        valset = Dataset(parser, split="val")
+    elif args.dataset == "blender":
+        parser = None
+        trainset = BlenderDataset(data_dir=args.data_dir, split="train")
+        valset = BlenderDataset(data_dir=args.data_dir, split="val")
+    else:
+        raise ValueError(f"Dataset mode {args.dataset} not supported!")
+
+    # Clear any existing models
+    textured_gaussian_models.clear()
+    
     for ckpt_path in args.ckpt:
         ckpt = torch.load(ckpt_path, map_location=device)["splats"]
-        means.append(ckpt["means"])
-        quats.append(F.normalize(ckpt["quats"], p=2, dim=-1))
-        scales.append(torch.exp(ckpt["scales"]))
-        opacities.append(torch.sigmoid(ckpt["opacities"]))
-        sh0.append(ckpt["sh0"])
-        shN.append(ckpt["shN"])
-        texture = ckpt["textures"]
-        textures.append(texture)
+        means = ckpt["means"]
+        quats = F.normalize(ckpt["quats"], p=2, dim=-1)
+        scales = torch.exp(ckpt["scales"])
+        opacities = torch.sigmoid(ckpt["opacities"])
+        sh0 = ckpt["sh0"]
+        shN = ckpt["shN"]
+        textures = ckpt["textures"]
 
         # Convert textures to packed format
         # [N, W, H, C] -> [C, N*W*H]
         # Construct the corresponding texture dimensions [N, 2] and offsets [N, 1]
-        texture_packed = texture.permute(3, 0, 1, 2).reshape(texture.shape[3], -1)
-        textures_packed.append(texture_packed)
+        textures_packed = textures.permute(3, 0, 1, 2).reshape(textures.shape[3], -1)
 
-        N, W, H, C = texture.shape
+        N, W, H, C = textures.shape
 
         # Texture dimensions: [N, 2] with [W, H]
-        dims = torch.tensor([[W, H]] * N, device=texture.device, dtype=torch.int32)
-        texture_dims_list.append(dims)
+        texture_dims = torch.tensor([[W, H]] * N, device=textures.device, dtype=torch.int32)
 
         # Offsets: [N, 1] where each is cumulative sum of previous W*H
-        areas = dims[:, 0] * dims[:, 1]  # W * H for each texture -> [N]
-        offsets = torch.zeros_like(areas)
-        offsets[1:] = torch.cumsum(areas, dim=0)[:-1]
-        texture_offsets_list.append(offsets.unsqueeze(1))  # Make shape [N, 1]
+        areas = texture_dims[:, 0] * texture_dims[:, 1]  # W * H for each texture -> [N]
+        texture_offsets = torch.zeros_like(areas)
+        texture_offsets[1:] = torch.cumsum(areas, dim=0)[:-1]
+        texture_offsets = texture_offsets.unsqueeze(1)  # Make shape [N, 1]
 
+        colors = torch.cat([sh0, shN], dim=-2)
         
+        # Create TexturedGaussiansModel instance and add to global list
+        model = TexturedGaussiansModel(
+            means=means,
+            quats=quats,
+            scales=scales,
+            opacities=opacities,
+            colors=colors,
+            textures=textures,
+            sh0=sh0,
+            shN=shN,
+            textures_packed=textures_packed,
+            texture_dims=texture_dims,
+            texture_offsets=texture_offsets
+        )
+        textured_gaussian_models.append(model)
 
-    colors = [None] * num_ckpts
-    for i in range(num_ckpts):
-        colors[i] = torch.cat([sh0[i], shN[i]], dim=-2)
-        sh_degree = int(math.sqrt(colors[i].shape[-2]) - 1)
+    sh_degree = int(math.sqrt(textured_gaussian_models[0].colors.shape[-2]) - 1)
     
-    print("Number of Gaussians:", len(means))
+    print("Number of Gaussians:", len(textured_gaussian_models))
 
-    plots = {
-        'gs_contrib_sum': None,
-        'gs_contrib_count': None,
-        'gs_weight_sum': None,
-        'gs_dx_sum': None,
-        'gs_dy_sum': None
-    }
-
-    plots_checkboxes = {
-        'gs_contrib_sum': None,
-        'gs_contrib_count': None,
-        'gs_weight_sum': None,
-        'gs_dx_sum': None,
-        'gs_dy_sum': None
-    }
     # register and open viewer
     def viewer_render_fn(
         camera_state: nerfview.CameraState, render_tab_state: nerfview.RenderTabState
@@ -166,29 +224,17 @@ def main(local_rank: int, world_rank, world_size: int, args):
             "gs_dy_sum": [None] * num_ckpts
         }
         for i in range(num_ckpts):
-            # render_colors, _, _, _, _, _, _, _, _ = rasterization_textured_gaussians(
-            #     means=means[i],
-            #     quats=quats[i],
-            #     scales=scales[i],
-            #     opacities=opacities[i],
-            #     colors=colors[i],
-            #     textures=textures[i],
-            #     viewmats=torch.linalg.inv(c2w[None]),
-            #     Ks=K[None],
-            #     width=width,
-            #     height=height,
-            #     sh_degree=sh_degree
-            # )
+            model = textured_gaussian_models[i]
             render_colors, *_, gs_contrib_sum, gs_contrib_count, gs_weight_sum, gs_dx_sum, gs_dy_sum, meta, = rasterization_packed_textured_gaussians(
-                means=means[i],
-                quats=quats[i],
-                scales=scales[i],
-                opacities=opacities[i],
-                colors=colors[i],
+                means=model.means,
+                quats=model.quats,
+                scales=model.scales,
+                opacities=model.opacities,
+                colors=model.colors,
                 textures=None,
-                textures_packed=textures_packed[i],
-                texture_dims=texture_dims_list[i],
-                texture_offsets=texture_offsets_list[i],
+                textures_packed=model.textures_packed,
+                texture_dims=model.texture_dims,
+                texture_offsets=model.texture_offsets,
                 viewmats=torch.linalg.inv(c2w[None]),
                 Ks=K[None],
                 width=width,
@@ -202,7 +248,7 @@ def main(local_rank: int, world_rank, world_size: int, args):
             metrics['gs_dx_sum'][i] = gs_dx_sum
             metrics['gs_dy_sum'][i] = gs_dy_sum
 
-        def get_contrib_sum_plot(histc_input, title="gs_contrib_sum", min_val=1.0, max_val=5000, bins=100):
+        def get_contrib_sum_plot(histc_input, title="gs_contrib_sum", min_val=1.0, max_val=5000, bins=1000):
             with torch.no_grad():
                 hist = torch.histc(histc_input, bins=bins, min=min_val, max=max_val).cpu().detach().numpy()
 
@@ -247,25 +293,30 @@ def main(local_rank: int, world_rank, world_size: int, args):
             slider_positions[idx] = value
         return update_slider
 
-    slider_callbacks = [make_update_slider(i) for i in range(num_ckpts-1)]
-    slider_inits = slider_positions
+    slider_callbacks.clear()
+    slider_callbacks.extend([make_update_slider(i) for i in range(num_ckpts-1)])
 
     server = viser.ViserServer(port=args.port, verbose=False)
     viewer = CustomViewer(
-        init_dict={
-            "sliders": slider_inits,
-        },
-        callback_dict={
-            "sliders": slider_callbacks,
-        },
-        plots=plots,
-        plots_checkboxes=plots_checkboxes,
         server=server,
         render_fn=viewer_render_fn,
         mode="rendering",
     )
     print("Viewer running... Ctrl+C to exit.")
-    time.sleep(100000)
+    viewer.custom_update(train_dataset=trainset, val_dataset=valset)
+    # cam0 = trainset[0]
+    # K = cam0["K"]
+    # image = cam0['image']
+    # fx = K[0, 0].detach().cpu().numpy()
+    # fy = K[1, 1].detach().cpu().numpy()
+    # fov_x = 2 * np.arctan(image.shape[0] / (2 * fx))
+    # fov_y = 2 * np.arctan(image.shape[1] / (2 * fy))
+    # print(f"fov_x: {fov_x}")
+    # print(f"fov_y: {fov_y}")
+    # for client in viewer.server.get_clients().values():
+    #     client.camera.fov = fov_x
+    while True:
+        time.sleep(1e-3)
 
 
 if __name__ == "__main__":
@@ -297,6 +348,22 @@ if __name__ == "__main__":
         "--with_ut", action="store_true", help="use uncentered transform"
     )
     parser.add_argument("--with_eval3d", action="store_true", help="use eval 3D")
+    parser.add_argument(
+        "--dataset",
+        type=str,
+        default="none",
+        choices=["colmap", "blender", "none"],
+        help="dataset to use",
+    )
+    parser.add_argument(
+        "--data_dir", type=str, default="", help="path to the dataset"
+    )
+    parser.add_argument(
+        "--data_factor", type=int, default=1, help="factor to downsample the dataset"
+    )
+    parser.add_argument(
+        "--test_every", type=int, default=8, help="split dataset"
+    )
     args = parser.parse_args()
     assert args.scene_grid % 2 == 1, "scene_grid must be odd"
 

@@ -34,7 +34,6 @@ for scene in scenes:
 
     cmd_textured_gaussians = (
         f"CUDA_VISIBLE_DEVICES=0 python simple_trainer_textured_gaussians.py mcmc "
-        # f"--ckpt {output_dir}/textured_gaussians_rgb_pc{point_count//1000}k_t{texture_resolution}/{scene}/ckpts/ckpt_29999.pt "
         f"--data_dir {dataset_dir}/{scene} "
         f"--pretrained_path {output_dir}/2dgs_mcmc_pc{point_count//1000}k_t{texture_resolution}/{scene}/ckpts/ckpt_29999.pt "
         f"--result_dir {output_dir}/ntex_rgb_pc{point_count//1000}k_t{texture_resolution}/{scene} "
@@ -45,7 +44,7 @@ for scene in scenes:
         f"--strategy.cap-max {point_count} "
         f"--strategy.refine-start-iter=1000000000000 "
         f"--textured_rgb "
-        # f"--textured_alpha "
+        f"--textured_alpha "
         f"--texture_resolution {texture_resolution} "
         f"--port 6070 "
         f"--eval_steps -1 "
