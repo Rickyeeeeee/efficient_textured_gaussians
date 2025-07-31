@@ -127,6 +127,7 @@ class UtilViewer(nerfview.Viewer):
                     color=(200, 20, 20),
                     image=image
                 )
+                self.val_frustums.append(frustum)
                 make_on_click_frustum_val(frustum=frustum, idx=i)
 
                 self.server.scene.add_label(

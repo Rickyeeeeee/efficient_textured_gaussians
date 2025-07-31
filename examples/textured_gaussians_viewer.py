@@ -27,6 +27,9 @@ import nerfview
 
 @dataclass
 class TexturedGaussiansModel:
+    """
+    Dataclass to hold all the components of a textured Gaussian model.
+    """
     means: Tensor
     quats: Tensor
     scales: Tensor
@@ -39,247 +42,306 @@ class TexturedGaussiansModel:
     texture_dims: Tensor
     texture_offsets: Tensor
 
-textured_gaussian_models: List[TexturedGaussiansModel] = []
-
-slider_positions: List[float] = []
-slider_callbacks: List = []
-
-plots = {
-    'gs_contrib_sum': None,
-    'gs_contrib_count': None,
-    'gs_weight_sum': None,
-    'gs_dx_sum': None,
-    'gs_dy_sum': None
-}
-
-plots_checkboxes = {
-    'gs_contrib_sum': None,
-    'gs_contrib_count': None,
-    'gs_weight_sum': None,
-    'gs_dx_sum': None,
-    'gs_dy_sum': None
-}
-
-debug_train_image_gt: np.array = None
-debug_train_image_render: np.array = None
-debug_model_idx = 0
-debug_val_image_gt: np.array = None
-debug_val_image_render: np.array = None
-render_train: callable = None
-render_val: callable = None
-gt_train: callable = None
-gt_val: callable = None
+# Constants for histogram plotting for better readability and maintainability
+HIST_MIN_VAL = 1.0
+HIST_MAX_VAL = 5000
+HIST_BINS = 1000
 
 class CustomViewer(UtilViewer):
+    """
+    Custom viewer class extending UtilViewer to integrate specific UI elements
+    and rendering debug functionalities for textured Gaussians.
+    """
     def __init__(self, *args, **kwargs):
+        # Initialize instance-specific plot handles and debug image storage
+        self.train_plot_handle: viser.gui.PlotlyHandle = None
+        self.val_plot_handle: viser.gui.PlotlyHandle = None
+        self.plots: Dict[str, viser.gui.PlotlyHandle] = {}
+        self.plots_checkboxes: Dict[str, viser.gui.CheckboxHandle] = {}
+
+        # Debug image storage for ground truth and rendered images
+        self.debug_train_image_gt: np.array = None
+        self.debug_train_image_render: np.array = None
+        self.debug_val_image_gt: np.array = None
+        self.debug_val_image_render: np.array = None
+        self.debug_model_idx = 0 # Index of the model to use for debug image rendering
+
+        # References to rendering functions, to be set by the main application logic
+        self._render_train_fn: callable = None
+        self._render_val_fn: callable = None
+        self._gt_train_fn: callable = None
+        self._gt_val_fn: callable = None
+
         super().__init__(*args, **kwargs)
 
     def _init_rendering_tab(self):
+        """Initializes the rendering tab and custom rendering folder."""
         super()._init_rendering_tab()
         self._custom_render_handles = {}
         self._custom_rendering_folder = self.server.gui.add_folder("Custom Rendering")
-        self.train_plot_handle = None
-        self.train_plot_handle = None
-
-    def update_frustum_callback(self):
-        def train_frustum_render_callback(frustum: viser.CameraFrustumHandle, idx):
-            @frustum.on_click
-            def _(_) -> None:
-                global debug_train_image_gt
-                debug_train_image_gt = gt_train(idx) / 255.0
-                debug_train_image_gt = np.flip(debug_train_image_gt, axis=(0))
-
-                global debug_train_image_render
-                debug_train_image_render = np.clip(render_train(idx), 0.0, 1.0)
-                debug_train_image_render = np.flip(debug_train_image_render, axis=(0))
-
-                diff = np.abs(debug_train_image_gt - debug_train_image_render)
-                image_stack = np.array([debug_train_image_gt, debug_train_image_render, np.sqrt(diff)])
-                # Create subplot figure
-                fig = px.imshow(image_stack, facet_col_wrap=2, facet_col=0)
-
-                self.train_plot_handle.figure = fig
-
-        for i, frustum in enumerate(self.train_frustums):
-            train_frustum_render_callback(frustum=frustum, idx=i)
-
-        def val_frustum_render_callback(frustum: viser.CameraFrustumHandle, idx):
-            @frustum.on_click
-            def _(_) -> None:
-                global debug_val_image_gt
-                debug_val_image_gt = gt_val(idx) / 255.0
-                debug_val_image_gt = np.flip(debug_val_image_gt, axis=(0))
-
-                global debug_val_image_render
-                debug_val_image_render = np.clip(render_val(idx), 0.0, 1.0)
-                debug_val_image_render = np.flip(debug_val_image_render, axis=(0))
-
-                diff = np.abs(debug_val_image_gt - debug_val_image_render)
-                image_stack = np.array([debug_val_image_gt, debug_val_image_render, np.sqrt(diff)])
-                # Create subplot figure
-                fig = px.imshow(image_stack, facet_col_wrap=2, facet_col=0)
-
-                self.test_plot_handle.figure = fig
-
-        for i, frustum in enumerate(self.val_frustums):
-            val_frustum_render_callback(frustum=frustum, idx=i)
 
     def _populate_rendering_tab(self):
+        """Populates the custom rendering tab with plot checkboxes and placeholders for sliders."""
         super()._populate_rendering_tab()
 
         with self._custom_rendering_folder:
-
+            # Helper function to create an on_update callback for sliders
             def make_on_update(callback, slider):
                 @slider.on_update
-                def on_update(_) -> None:
+                def on_update_callback(_) -> None:
                     callback(slider.value)
-                    self.rerender(_)
+                    self.rerender(_) # Trigger a main scene rerender when slider changes
 
-            def make_on_update_checkbox(checkbox, plot):
+            # Helper function to create an on_update callback for checkboxes
+            def make_on_update_checkbox(checkbox, plot_handle):
                 @checkbox.on_update
-                def on_update(_) -> None:
-                    plot.visible = checkbox.value
-                    self.rerender(_)
+                def on_update_checkbox_callback(_) -> None:
+                    plot_handle.visible = checkbox.value
+                    # No main scene rerender needed for just plot visibility change
+
+            # Initial dummy figure for plotly plots to be replaced later
             x = torch.randn(1000, 1)
             x_np = x.view(-1).numpy()
-            fig = px.histogram(x_np, nbins=30, title="Histogram of Tensor Values")
-            fig.update_layout(margin=dict(l=10, r=10, t=30, b=10))
+            dummy_fig = px.histogram(x_np, nbins=30, title="Histogram of Tensor Values")
+            dummy_fig.update_layout(margin=dict(l=10, r=10, t=30, b=10))
 
             self.server.gui.add_markdown("### Plots")
-            for name in list(plots.keys()):
+            plot_names = ['gs_contrib_sum', 'gs_contrib_count', 'gs_weight_sum', 'gs_dx_sum', 'gs_dy_sum']
+            for name in plot_names:
                 checkbox = self.server.gui.add_checkbox(label=name, initial_value=False)
-                plot = self.server.gui.add_plotly(figure=fig, aspect=1, visible=False)
-                make_on_update_checkbox(checkbox=checkbox, plot=plot)
-                plots[name] = plot
-                plots_checkboxes[name] = checkbox
+                plot = self.server.gui.add_plotly(figure=dummy_fig, aspect=1, visible=False)
+                make_on_update_checkbox(checkbox=checkbox, plot_handle=plot)
+                self.plots[name] = plot
+                self.plots_checkboxes[name] = checkbox
 
-            for i, (callback, initial_value) in enumerate(zip(slider_callbacks, slider_positions)):
-                slider = self.server.gui.add_slider(
-                    f"Slider {i+1}",
-                    min=0.0,
-                    max=1.0,
-                    step=0.001,
-                    initial_value=initial_value,
-                    hint=f"Adjust the position of segment {i+1}"
-                )
-
-                make_on_update(callback, slider)
-
-                self._custom_render_handles[f"Slider {i+1}"] = slider
-
+            # Placeholders for train/val image plots
             self.train_plot_handle = self.server.gui.add_plotly(
-                figure=go.Figure()
+                figure=go.Figure(),
+                aspect=1.0, # Maintain aspect ratio
+                visible=True # Initially visible for debugging
             )
             self.val_plot_handle = self.server.gui.add_plotly(
-                figure=go.Figure()
+                figure=go.Figure(),
+                aspect=1.0, # Maintain aspect ratio
+                visible=True # Initially visible for debugging
             )
 
+    def set_rendering_functions(self, render_train_fn: callable, render_val_fn: callable,
+                                gt_train_fn: callable, gt_val_fn: callable):
+        """Sets the external rendering and ground truth functions for the viewer."""
+        self._render_train_fn = render_train_fn
+        self._render_val_fn = render_val_fn
+        self._gt_train_fn = gt_train_fn
+        self._gt_val_fn = gt_val_fn
 
-def main(local_rank: int, world_rank, world_size: int, args):
-    global textured_gaussian_models, slider_positions, slider_callbacks
-    torch.manual_seed(42)
+    def add_slider_to_gui(self, label: str, initial_value: float, callback: callable):
+        """Adds a slider to the custom rendering folder in the GUI."""
+        with self._custom_rendering_folder:
+            slider = self.server.gui.add_slider(
+                label,
+                min=0.0,
+                max=1.0,
+                step=0.001,
+                initial_value=initial_value,
+                hint=f"Adjust the position of {label}"
+            )
+            # Attach the callback to the slider's update event
+            @slider.on_update
+            def on_update(_) -> None:
+                callback(slider.value)
+                self.rerender(_) # Trigger a main scene rerender when slider changes
 
-    device = torch.device("cuda", local_rank)
-    
-    num_ckpts = len(args.ckpt)
+    def _update_image_plot(self, frustum_idx: int, is_train: bool):
+        """
+        Helper function to render images and update the corresponding Plotly figure
+        for either train or validation frustums.
+        """
+        if is_train:
+            gt_image = self._gt_train_fn(frustum_idx) / 255.0
+            render_image = np.clip(self._render_train_fn(frustum_idx), 0.0, 1.0)
+            plot_handle = self.train_plot_handle
+        else:
+            gt_image = self._gt_val_fn(frustum_idx) / 255.0
+            render_image = np.clip(self._render_val_fn(frustum_idx), 0.0, 1.0)
+            plot_handle = self.val_plot_handle
 
-    slider_positions.clear()
-    slider_positions.extend([(i+1)*(1/num_ckpts) for i in range(num_ckpts-1)])
-    parser = None
+        # Flip images vertically for correct display in Plotly
+        gt_image = np.flip(gt_image, axis=(0))
+        render_image = np.flip(render_image, axis=(0))
 
-    trainset = None
-    valset = None
+        diff = np.abs(gt_image - render_image)
+        # Stack images: Ground Truth, Rendered, and the square root of their difference
+        image_stack = np.array([gt_image, render_image, np.sqrt(diff)])
 
-    # Load data: Training data should contain initial points and colors.
-    if args.dataset == "colmap":
-        parser = Parser(
-            data_dir=args.data_dir,
-            factor=args.data_factor,
-            normalize=True,
-            test_every=args.test_every,
+        fig = px.imshow(
+            image_stack,
+            facet_col=0,
+            facet_col_wrap=2,
+            facet_col_spacing=0.0,
+            facet_row_spacing=0.0,
+            labels={
+                "facet_col": "Image Type",
+                "x": "Width",
+                "y": "Height",
+                "color": "Pixel Value"
+            },
+            title="Ground Truth | Rendered | Difference" # This title will be overridden by update_layout
         )
-        trainset = Dataset(
-            parser,
-            split="train",
+        fig.update_traces(hovertemplate="x: %{x} <br> y: %{y} <br> color: %{color}")
+        fig.for_each_annotation(lambda a: a.update(text='')) # Remove default facet titles for cleaner look
+        fig.update_layout(
+            margin=dict(l=10, r=10, t=30, b=10),
+            title_text="Ground Truth vs. Rendered Image (and Difference)",
+            title_x=0.5 # Center the main title
         )
-        valset = Dataset(parser, split="val")
-    elif args.dataset == "blender":
-        parser = None
-        trainset = BlenderDataset(data_dir=args.data_dir, split="train")
-        valset = BlenderDataset(data_dir=args.data_dir, split="val")
-    else:
-        raise ValueError(f"Dataset mode {args.dataset} not supported!")
+        plot_handle.figure = fig
 
-    # Clear any existing models
-    textured_gaussian_models.clear()
-    
-    for ckpt_path in args.ckpt:
-        ckpt = torch.load(ckpt_path, map_location=device)["splats"]
-        means = ckpt["means"]
-        quats = F.normalize(ckpt["quats"], p=2, dim=-1)
-        scales = torch.exp(ckpt["scales"])
-        opacities = torch.sigmoid(ckpt["opacities"])
-        sh0 = ckpt["sh0"]
-        shN = ckpt["shN"]
-        textures = ckpt["textures"]
+    def update_frustum_callback(self):
+        """Attaches click callbacks to train and validation frustums to update image plots."""
+        # Attach callback for training frustums
+        for i, frustum in enumerate(self.train_frustums):
+            @frustum.on_click
+            def _(event, frustum_idx=i) -> None:
+                self._update_image_plot(frustum_idx, is_train=True)
+                # self.debug_model_idx = frustum_idx # Update the debug model index
 
-        # Convert textures to packed format
-        # [N, W, H, C] -> [C, N*W*H]
-        # Construct the corresponding texture dimensions [N, 2] and offsets [N, 1]
-        textures_packed = textures.permute(3, 0, 1, 2).reshape(textures.shape[3], -1)
+        # Attach callback for validation frustums
+        for i, frustum in enumerate(self.val_frustums):
+            @frustum.on_click
+            def _(event, frustum_idx=i) -> None:
+                self._update_image_plot(frustum_idx, is_train=False)
+                # self.debug_model_idx = frustum_idx # Update the debug model index
 
-        N, W, H, C = textures.shape
+    def get_contrib_sum_plot(self, histc_input: torch.Tensor, title: str) -> go.Figure:
+        """Generates a histogram plot for given tensor data, using predefined constants."""
+        with torch.no_grad():
+            hist = torch.histc(histc_input, bins=HIST_BINS, min=HIST_MIN_VAL, max=HIST_MAX_VAL).cpu().detach().numpy()
 
-        # Texture dimensions: [N, 2] with [W, H]
-        texture_dims = torch.tensor([[W, H]] * N, device=textures.device, dtype=torch.int32)
+        bin_edges = torch.linspace(HIST_MIN_VAL, HIST_MAX_VAL, steps=HIST_BINS + 1).cpu().numpy()
+        bin_centers = 0.5 * (bin_edges[:-1] + bin_edges[1:])
 
-        # Offsets: [N, 1] where each is cumulative sum of previous W*H
-        areas = texture_dims[:, 0] * texture_dims[:, 1]  # W * H for each texture -> [N]
-        texture_offsets = torch.zeros_like(areas)
-        texture_offsets[1:] = torch.cumsum(areas, dim=0)[:-1]
-        texture_offsets = texture_offsets.unsqueeze(1)  # Make shape [N, 1]
-
-        colors = torch.cat([sh0, shN], dim=-2)
-        
-        # Create TexturedGaussiansModel instance and add to global list
-        model = TexturedGaussiansModel(
-            means=means,
-            quats=quats,
-            scales=scales,
-            opacities=opacities,
-            colors=colors,
-            textures=textures,
-            sh0=sh0,
-            shN=shN,
-            textures_packed=textures_packed,
-            texture_dims=texture_dims,
-            texture_offsets=texture_offsets
+        fig = px.histogram(
+            x=bin_centers,
+            y=hist,
+            nbins=HIST_BINS,
+            labels={'x': 'Value', 'y': 'Count'},
+            title=title
         )
-        textured_gaussian_models.append(model)
+        return fig.update_layout(margin=dict(l=10, r=10, t=30, b=10))
 
-    sh_degree = int(math.sqrt(textured_gaussian_models[0].colors.shape[-2]) - 1)
-    
-    print("Number of Gaussians:", len(textured_gaussian_models))
+class GaussianViewerApp:
+    """
+    Main application class to manage the textured Gaussian models, datasets,
+    and the Viser viewer.
+    """
+    def __init__(self, args):
+        self.args = args
+        self.device = torch.device("cuda", args.local_rank) # Use local_rank for device assignment
+        self.textured_gaussian_models: List[TexturedGaussiansModel] = []
+        self.slider_positions: List[float] = []
+        self.slider_callbacks: List[callable] = []
+        self.sh_degree: int = 0 # Spherical harmonics degree
 
-    # register and open viewer
-    def viewer_render_fn(
-        camera_state: nerfview.CameraState, render_tab_state: nerfview.RenderTabState
-    ):
-        """Callable function for the viewer."""
-        # if render_tab_state.preview_render:
-        #     width = render_tab_state.render_width
-        #     height = render_tab_state.render_height
-        # else:
-            # width = render_tab_state.viewer_width
-            # height = render_tab_state.viewer_height
+        self.trainset = None
+        self.valset = None
 
+        # Initialize the Viser server and CustomViewer
+        self.server = viser.ViserServer(port=self.args.port, verbose=False)
+        self.viewer = CustomViewer(
+            server=self.server,
+            render_fn=self._viewer_render_fn, # Main rendering function for the 3D scene
+            mode="rendering",
+        )
+
+    def _load_datasets(self):
+        """Loads the training and validation datasets based on command-line arguments."""
+        if self.args.dataset == "colmap":
+            parser = Parser(
+                data_dir=self.args.data_dir,
+                factor=self.args.data_factor,
+                normalize=True,
+                test_every=self.args.test_every,
+            )
+            self.trainset = Dataset(parser, split="train")
+            self.valset = Dataset(parser, split="val")
+        elif self.args.dataset == "blender":
+            self.trainset = BlenderDataset(data_dir=self.args.data_dir, split="train")
+            self.valset = BlenderDataset(data_dir=self.args.data_dir, split="val")
+        else:
+            raise ValueError(f"Dataset mode {self.args.dataset} not supported!")
+
+    def _load_models(self):
+        """
+        Loads TexturedGaussiansModel instances from specified checkpoint paths.
+        Converts textures to a packed format for efficient rendering.
+        """
+        self.textured_gaussian_models.clear() # Clear existing models before loading new ones
+        for ckpt_path in self.args.ckpt:
+            ckpt = torch.load(ckpt_path, map_location=self.device)["splats"]
+            means = ckpt["means"]
+            quats = F.normalize(ckpt["quats"], p=2, dim=-1)
+            scales = torch.exp(ckpt["scales"])
+            opacities = torch.sigmoid(ckpt["opacities"])
+            sh0 = ckpt["sh0"]
+            shN = ckpt["shN"]
+            textures = ckpt["textures"]
+
+            # Convert textures from [N, W, H, C] to packed format [C, N*W*H]
+            textures_packed = textures.permute(3, 0, 1, 2).reshape(textures.shape[3], -1)
+
+            N, W, H, C = textures.shape
+
+            # Texture dimensions: [N, 2] with [W, H] for each texture
+            texture_dims = torch.tensor([[W, H]] * N, device=textures.device, dtype=torch.int32)
+
+            # Offsets: [N, 1] where each is the cumulative sum of previous W*H areas
+            areas = texture_dims[:, 0] * texture_dims[:, 1]  # W * H for each texture -> [N]
+            texture_offsets = torch.zeros_like(areas)
+            # Calculate cumulative sum for offsets, excluding the last element
+            texture_offsets[1:] = torch.cumsum(areas, dim=0)[:-1]
+            texture_offsets = texture_offsets.unsqueeze(1)  # Reshape to [N, 1]
+
+            colors = torch.cat([sh0, shN], dim=-2) # Concatenate SH coefficients
+
+            # Create and store the TexturedGaussiansModel instance
+            model = TexturedGaussiansModel(
+                means=means,
+                quats=quats,
+                scales=scales,
+                opacities=opacities,
+                colors=colors,
+                textures=textures,
+                sh0=sh0,
+                shN=shN,
+                textures_packed=textures_packed,
+                texture_dims=texture_dims,
+                texture_offsets=texture_offsets
+            )
+            self.textured_gaussian_models.append(model)
+
+        # Determine the spherical harmonics degree from the first loaded model
+        if self.textured_gaussian_models:
+            self.sh_degree = int(math.sqrt(self.textured_gaussian_models[0].colors.shape[-2]) - 1)
+            print(f"Number of Gaussian models loaded: {len(self.textured_gaussian_models)}")
+        else:
+            print("No Gaussian models loaded.")
+
+    def _viewer_render_fn(
+        self, camera_state: nerfview.CameraState, render_tab_state: nerfview.RenderTabState
+    ) -> np.array:
+        """
+        The main rendering function called by the Viser viewer.
+        It renders a composite image by combining outputs from multiple Gaussian models
+        based on slider positions.
+        """
         width = render_tab_state.render_width
         height = render_tab_state.render_height
         
-        # convert to float32
-        c2w = torch.tensor(camera_state.c2w).to(device, dtype=torch.float32)
-        K = torch.tensor(camera_state.get_K([width, height])).to(device, dtype=torch.float32)
+        # Convert camera state to PyTorch tensors and move to device
+        c2w = torch.tensor(camera_state.c2w).to(self.device, dtype=torch.float32)
+        K = torch.tensor(camera_state.get_K([width, height])).to(self.device, dtype=torch.float32)
 
+        num_ckpts = len(self.textured_gaussian_models)
         render_images = [None] * num_ckpts
         metrics = {
             "gs_contrib_sum": [None] * num_ckpts,
@@ -288,23 +350,25 @@ def main(local_rank: int, world_rank, world_size: int, args):
             "gs_dx_sum": [None] * num_ckpts,
             "gs_dy_sum": [None] * num_ckpts
         }
+
+        # Render each Gaussian model
         for i in range(num_ckpts):
-            model = textured_gaussian_models[i]
+            model = self.textured_gaussian_models[i]
             render_colors, *_, gs_contrib_sum, gs_contrib_count, gs_weight_sum, gs_dx_sum, gs_dy_sum, meta, = rasterization_packed_textured_gaussians(
                 means=model.means,
                 quats=model.quats,
                 scales=model.scales,
                 opacities=model.opacities,
                 colors=model.colors,
-                textures=None,
+                textures=None, # Using packed textures
                 textures_packed=model.textures_packed,
                 texture_dims=model.texture_dims,
                 texture_offsets=model.texture_offsets,
-                viewmats=torch.linalg.inv(c2w[None]),
-                Ks=K[None],
+                viewmats=torch.linalg.inv(c2w[None]), # Inverse of camera-to-world matrix
+                Ks=K[None], # Camera intrinsics
                 width=width,
                 height=height,
-                sh_degree=sh_degree
+                sh_degree=self.sh_degree # Spherical harmonics degree
             )
             render_images[i] = render_colors
             metrics['gs_contrib_count'][i] = gs_contrib_count
@@ -313,53 +377,51 @@ def main(local_rank: int, world_rank, world_size: int, args):
             metrics['gs_dx_sum'][i] = gs_dx_sum
             metrics['gs_dy_sum'][i] = gs_dy_sum
 
-        def get_contrib_sum_plot(histc_input, title="gs_contrib_sum", min_val=1.0, max_val=5000, bins=1000):
-            with torch.no_grad():
-                hist = torch.histc(histc_input, bins=bins, min=min_val, max=max_val).cpu().detach().numpy()
+        # Update plots in the GUI if their checkboxes are active
+        for name, plot_handle in self.viewer.plots.items():
+            if self.viewer.plots_checkboxes[name].value:
+                # Assuming we only plot for the first model's metrics for simplicity
+                plot_handle.figure = self.viewer.get_contrib_sum_plot(metrics[name][0], name)
 
-            bin_edges = torch.linspace(min_val, max_val, steps=bins + 1).cpu().numpy()
-            bin_centers = 0.5 * (bin_edges[:-1] + bin_edges[1:])
+        # Return a black image if no models are loaded
+        if not render_images:
+            return np.zeros((height, width, 3), dtype=np.float32)
 
-            fig = px.histogram(
-                x=bin_centers,
-                y=hist,
-                nbins=bins,
-                labels={'x': 'Value', 'y': 'Count'},
-                title=title
-            )
-            return fig.update_layout(margin=dict(l=10, r=10, t=30, b=10))
-        
-        for name, plot in plots.items():
-            value = plots_checkboxes[name].value
-            if plots_checkboxes[name].value:
-                plot.figure = get_contrib_sum_plot(metrics[name][0], name)
-
-        # All images must have the same shape
+        # Prepare final composite image
         H, W, C = render_images[0][0].shape
         final_image = torch.zeros_like(render_images[0][0])
 
-        # Compute width per segment
-
+        # Composite images based on slider positions
         for i in range(num_ckpts):
-            # Calculate the start and end indices based on the slider position
-            start = int(slider_positions[i-1] * W) if i != 0 else 0
-            end = int(slider_positions[i] * W) if i != num_ckpts - 1 else W
-            final_image[:, start:end] = render_images[i][0][:, start:end]
+            # Calculate start and end X-coordinates for the current segment
+            start_x = int(self.slider_positions[i-1] * W) if i != 0 else 0
+            end_x = int(self.slider_positions[i] * W) if i != num_ckpts - 1 else W
+            
+            # Ensure the last segment covers the remaining width
+            if i == num_ckpts - 1:
+                end_x = W 
+            
+            # Copy the segment from the current rendered image to the final image
+            final_image[:, start_x:end_x] = render_images[i][0][:, start_x:end_x]
 
-        # Optional: draw separator lines between segments
-        for pos in slider_positions:
+        # Draw separator lines between segments for visual clarity
+        for pos in self.slider_positions:
             x_pos = int(pos * W)
-            final_image[:, x_pos - 1:x_pos + 1] = 1.0
+            # Draw a 2-pixel wide white line
+            final_image[:, max(0, x_pos - 1):min(W, x_pos + 1)] = 1.0
 
         return final_image.cpu().detach().numpy()
 
-    def train_render_fn(idx):
-        data = trainset[idx]
-        K = data['K'].cuda()
-        c2w = data['camtoworld'].cuda()
-        image = data['image'].cuda()
+    def _train_render_fn(self, idx: int) -> np.array:
+        """Renders a single image from the training set using the currently debugged model."""
+        data = self.trainset[idx]
+        K = data['K'].to(self.device)
+        c2w = data['camtoworld'].to(self.device)
+        image = data['image'].to(self.device) # Not used for rendering, but for shape
         h, w = image.shape[0], image.shape[1]
-        model = textured_gaussian_models[debug_model_idx]
+        
+        # Use the model selected by the debug_model_idx in the viewer
+        model = self.textured_gaussian_models[self.viewer.debug_model_idx] 
         render_colors, *_ = rasterization_packed_textured_gaussians(
             means=model.means,
             quats=model.quats,
@@ -374,20 +436,20 @@ def main(local_rank: int, world_rank, world_size: int, args):
             Ks=K[None],
             width=w,
             height=h,
-            sh_degree=sh_degree
+            sh_degree=self.sh_degree
         )
         return render_colors.squeeze(0).detach().cpu().numpy()
-    
-    global render_train
-    render_train = train_render_fn
 
-    def val_render_fn(idx):
-        data = valset[idx]
-        K = data['K']
-        c2w = data['camtoworld']
-        image = data['image']
+    def _val_render_fn(self, idx: int) -> np.array:
+        """Renders a single image from the validation set using the currently debugged model."""
+        data = self.valset[idx]
+        K = data['K'].to(self.device)
+        c2w = data['camtoworld'].to(self.device)
+        image = data['image'].to(self.device) # Not used for rendering, but for shape
         h , w = image.shape[0], image.shape[1]
-        model = textured_gaussian_models[debug_model_idx]
+        
+        # Use the model selected by the debug_model_idx in the viewer
+        model = self.textured_gaussian_models[self.viewer.debug_model_idx] 
         render_colors, *_ = rasterization_packed_textured_gaussians(
             means=model.means,
             quats=model.quats,
@@ -402,56 +464,72 @@ def main(local_rank: int, world_rank, world_size: int, args):
             Ks=K[None],
             width=w,
             height=h,
-            sh_degree=sh_degree
+            sh_degree=self.sh_degree
         )
         return render_colors.squeeze(0).detach().cpu().numpy()
-    global render_val
-    render_val = val_render_fn
 
-    def train_gt_fn(idx):
-        return trainset[idx]['image'].detach().cpu().numpy()
-    global gt_train
-    gt_train = train_gt_fn
+    def _train_gt_fn(self, idx: int) -> np.array:
+        """Retrieves the ground truth image from the training set."""
+        return self.trainset[idx]['image'].detach().cpu().numpy()
 
-    def val_gt_fn(idx):
-        return valset[idx]['image'].detach().cpu().numpy()
-    global gt_val
-    gt_val = val_gt_fn
+    def _val_gt_fn(self, idx: int) -> np.array:
+        """Retrieves the ground truth image from the validation set."""
+        return self.valset[idx]['image'].detach().cpu().numpy()
 
-    def make_update_slider(idx: int):
+    def _make_update_slider_callback(self, idx: int) -> callable:
+        """Factory function to create a callback for a specific slider."""
         def update_slider(value: float):
-            slider_positions[idx] = value
+            self.slider_positions[idx] = value
         return update_slider
 
-    slider_callbacks.clear()
-    slider_callbacks.extend([make_update_slider(i) for i in range(num_ckpts-1)])
+    def run(self):
+        """Main method to set up and run the Gaussian viewer application."""
+        torch.manual_seed(42) # Ensure reproducibility
 
-    server = viser.ViserServer(port=args.port, verbose=False)
-    viewer = CustomViewer(
-        server=server,
-        render_fn=viewer_render_fn,
-        mode="rendering",
-    )
-    print("Viewer running... Ctrl+C to exit.")
-    viewer.custom_update(train_dataset=trainset, val_dataset=valset)
-    viewer.update_frustum_callback()
-    # cam0 = trainset[0]
-    # K = cam0["K"]
-    # image = cam0['image']
-    # fx = K[0, 0].detach().cpu().numpy()
-    # fy = K[1, 1].detach().cpu().numpy()
-    # fov_x = 2 * np.arctan(image.shape[0] / (2 * fx))
-    # fov_y = 2 * np.arctan(image.shape[1] / (2 * fy))
-    # print(f"fov_x: {fov_x}")
-    # print(f"fov_y: {fov_y}")
-    # for client in viewer.server.get_clients().values():
-    #     client.camera.fov = fov_x
-    while True:
-        time.sleep(1e-3)
+        self._load_datasets()
+        self._load_models()
 
+        num_ckpts = len(self.textured_gaussian_models)
+        # Initialize slider positions for blending multiple checkpoints
+        self.slider_positions = [(i + 1) * (1 / num_ckpts) for i in range(num_ckpts - 1)]
+        # Create callbacks for each slider
+        self.slider_callbacks = [self._make_update_slider_callback(i) for i in range(num_ckpts - 1)]
+
+        # Pass the rendering and ground truth functions to the viewer
+        self.viewer.set_rendering_functions(
+            render_train_fn=self._train_render_fn,
+            render_val_fn=self._val_render_fn,
+            gt_train_fn=self._train_gt_fn,
+            gt_val_fn=self._val_gt_fn
+        )
+
+        # Add sliders to the GUI based on the number of checkpoints
+        for i, (callback, initial_value) in enumerate(zip(self.slider_callbacks, self.slider_positions)):
+            self.viewer.add_slider_to_gui(f"Slider {i+1}", initial_value, callback)
+
+        # Update frustums and attach click callbacks in the viewer
+        self.viewer.custom_update(train_dataset=self.trainset, val_dataset=self.valset)
+        self.viewer.update_frustum_callback()
+
+        print("Viewer running... Ctrl+C to exit.")
+        # Keep the server running indefinitely
+        while True:
+            time.sleep(1e-3)
+
+def main(local_rank: int, world_rank, world_size: int, args):
+    """
+    Entry point for the distributed CLI.
+    Initializes and runs the GaussianViewerApp.
+    """
+    # Attach local_rank to args for the app to use
+    args.local_rank = local_rank 
+    app = GaussianViewerApp(args)
+    app.run()
 
 if __name__ == "__main__":
     """
+    Command-line interface setup for running the Gaussian viewer.
+    Example usage:
     # Use single GPU to view the scene
     CUDA_VISIBLE_DEVICES=9 python -m simple_viewer \
         --ckpt results/garden/ckpts/ckpt_6999_rank0.pt \
@@ -498,4 +576,5 @@ if __name__ == "__main__":
     args = parser.parse_args()
     assert args.scene_grid % 2 == 1, "scene_grid must be odd"
 
+    # Use the distributed CLI entry point
     cli(main, args, verbose=True)
