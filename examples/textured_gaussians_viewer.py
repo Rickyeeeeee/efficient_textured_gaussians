@@ -334,8 +334,12 @@ class GaussianViewerApp:
         It renders a composite image by combining outputs from multiple Gaussian models
         based on slider positions.
         """
-        width = render_tab_state.render_width
-        height = render_tab_state.render_height
+        if render_tab_state.preview_render:
+            width = render_tab_state.render_width
+            height = render_tab_state.render_height
+        else:
+            width = render_tab_state.viewer_width
+            height = render_tab_state.viewer_height
         
         # Convert camera state to PyTorch tensors and move to device
         c2w = torch.tensor(camera_state.c2w).to(self.device, dtype=torch.float32)

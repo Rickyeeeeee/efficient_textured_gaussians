@@ -6,6 +6,7 @@ from dataclasses import dataclass, field
 from typing import Dict, List, Literal, Optional, Tuple, Union
 from typing_extensions import assert_never
 from itertools import tee
+from enum import Enum
 
 import imageio
 import nerfview
@@ -16,8 +17,12 @@ import tqdm
 import tyro
 import yaml
 import viser
+import plotly.graph_objects as go
+import plotly.express as px
 from datasets.colmap import Dataset, Parser, BlenderDataset
 from datasets.traj import generate_interpolated_path
+from utils import rgb_to_sh
+from util_viewer import UtilViewer
 from torch import Tensor
 from torch.utils.tensorboard import SummaryWriter
 from torchmetrics.image import PeakSignalNoiseRatio, StructuralSimilarityIndexMeasure
@@ -33,7 +38,7 @@ from utils import (
 )
 
 from textured_gaussians.rendering import rasterization_2dgs, rasterization_textured_gaussians, rasterization_packed_textured_gaussians
-from textured_gaussians.strategy import DefaultStrategy, MCMCStrategy
+from textured_gaussians.strategy import DefaultStrategy, MCMCStrategy, TextureStrategy
 
 
 @dataclass
@@ -73,6 +78,8 @@ class Config:
     eval_steps: List[int] = field(default_factory=lambda: [7_000, 30_000])
     # Steps to save the model
     save_steps: List[int] = field(default_factory=lambda: [7_000, 30_000])
+    # Steps to pause when training for debugging
+    pause_steps: List[int] = field(default_factory=lambda: [500, 10000])
 
     # Initialization strategy
     init_type: str = "sfm"
@@ -121,7 +128,7 @@ class Config:
     # Use sparse gradients for optimization. (experimental)
     sparse_grad: bool = False
     # Use absolute gradient for pruning. This typically requires larger --grow_grad2d, e.g., 0.0008 or 0.0006
-    absgrad: bool = False
+    absgrad: bool = True
     # Anti-aliasing in rasterization. Might slightly hurt quantitative metrics.
     antialiased: bool = False
     # Whether to use revised opacity heuristic from arXiv:2404.06109 (experimental)
@@ -195,6 +202,14 @@ class Config:
     texture_resolution: int = 50
     textured_rgb: bool = False
     textured_alpha: bool = False
+
+    min_tex_res: int = 1
+    max_tex_res: int = 16
+    upscale_grad2d: float = 0.0002
+    upscale_start_iter: int = 15000
+    upscale_stop_iter: int = 30000
+    upscale_every: int = 100
+    upscale_abs_grad: bool = True
 
     def adjust_steps(self, factor: float):
         self.eval_steps = [int(i * factor) for i in self.eval_steps]
@@ -341,6 +356,122 @@ def create_splats_with_optimizers(
     }
     return splats, optimizers, constants
 
+HIST_MIN_VAL = 1.0
+HIST_MAX_VAL = 5000
+HIST_BINS = 1000
+
+class RenderMode(Enum):
+    RGB='RGB'
+    GRAD='grad'
+    TEX_SIZE='texture size'
+    SH='sh'
+
+class TrainViewer(UtilViewer):
+    def __init__(self, *args, **kwargs):
+        self.gui_handles = {
+            'render_mode': None,
+            'texture_size_plot': None,
+            'grad_plot': None
+        }
+        self.render_mode = 'RGB'
+        super().__init__(*args, **kwargs)
+
+
+    def _init_rendering_tab(self):
+        super()._init_rendering_tab()
+        self._visualization_folder = self.server.gui.add_folder("Visualization")
+
+    def _populate_rendering_tab(self):
+        super()._populate_rendering_tab()
+        with self._visualization_folder:
+            render_mode_dropdown = self.server.gui.add_dropdown(
+                label='render mode',
+                options=[
+                    RenderMode.RGB,
+                    RenderMode.GRAD,
+                    RenderMode.TEX_SIZE,
+                    RenderMode.SH
+                ],
+                initial_value=RenderMode.RGB
+            )
+            self.gui_handles['render_mode'] = render_mode_dropdown
+            grad2d_slider = self.server.gui.add_slider(
+                label='grad2d threshold',
+                min=0.0,
+                max=0.01,
+                step=0.0001,
+                initial_value=0.001,
+                visible=False
+            )
+            self.gui_handles['grad2d_slider'] = grad2d_slider
+            grad2d_count = self.server.gui.add_number(
+                label='grad2d count',
+                initial_value=0,
+                min=0,
+                max=1000000,
+                step=1,
+                disabled=True,
+                visible=False
+            )
+            self.gui_handles['grad2d_count'] = grad2d_count
+
+            @grad2d_slider.on_update
+            def _(_) -> None:
+                self.rerender(_)
+
+            @render_mode_dropdown.on_update
+            def _(_):
+                grad2d_slider.visible = False
+                grad2d_count.visible = False
+                match render_mode_dropdown.value:
+                    case RenderMode.RGB:
+                        pass
+                    case RenderMode.GRAD:
+                        grad2d_slider.visible = True
+                        grad2d_count.visible = True
+                    case RenderMode.TEX_SIZE:
+                        pass
+                    case RenderMode.SH:
+                        pass
+                self.rerender(_)
+
+            self.server.gui.add_markdown(
+                content='texture size plot'
+            )
+            self.gui_handles['texture_size_plot'] = self.server.gui.add_plotly(
+                figure=go.Figure()
+            )
+            self.server.gui.add_markdown(
+                content='grad plot'
+            )
+            self.gui_handles['grad_plot'] = self.server.gui.add_plotly(
+                figure=go.Figure()
+            )
+
+    def set_plot(
+            self, 
+            name: str, 
+            histc_input: torch.Tensor, 
+            title: str,
+            hist_bins: int,
+            hist_min_val: int,
+            hist_max_val: int
+        ) -> None:
+        """Generates a histogram plot for given tensor data, using predefined constants."""
+        with torch.no_grad():
+            hist = torch.histc(histc_input, bins=hist_bins, min=hist_min_val, max=hist_max_val).cpu().detach().numpy()
+
+        bin_edges = torch.linspace(hist_min_val, hist_max_val, steps=hist_bins + 1).cpu().numpy()
+        bin_centers = 0.5 * (bin_edges[:-1] + bin_edges[1:])
+
+        fig = px.histogram(
+            x=bin_centers,
+            y=hist,
+            nbins=hist_bins,
+            labels={'x': 'Value', 'y': 'Count'},
+            title=title
+        ).update_layout(margin=dict(l=10, r=10, t=30, b=10))
+        self.gui_handles[name].figure = fig
 
 class Runner:
     """Engine for training and testing."""
@@ -438,6 +569,19 @@ class Runner:
         self.strategy.check_sanity(self.splats, self.optimizers)
         self.strategy_state = self.cfg.strategy.initialize_state()
 
+        self.texture_strategy = TextureStrategy(
+            min_tex_res=self.cfg.min_tex_res,
+            max_tex_res=self.cfg.max_tex_res,
+            upscale_grad2d=self.cfg.upscale_grad2d,
+            upscale_start_iter=self.cfg.upscale_start_iter,
+            upscale_stop_iter=self.cfg.upscale_stop_iter,
+            upscale_every=self.cfg.upscale_every,
+            reset_every=self.cfg.reset_every,
+            absgrad=self.cfg.absgrad,
+            verbose=True
+        )
+        self.texture_strategy_state = self.texture_strategy.initialize_state()
+
         self.pose_optimizers = []
         if cfg.pose_opt:
             self.pose_adjust = CameraOptModule(len(self.trainset)).to(self.device)
@@ -484,11 +628,19 @@ class Runner:
         # Viewer
         if not self.cfg.disable_viewer:
             self.server = viser.ViserServer(port=cfg.port, verbose=False)
-            self.viewer = nerfview.Viewer(
+            self.viewer = TrainViewer(
                 server=self.server,
                 render_fn=self._viewer_render_fn,
                 mode="training",
             )
+
+        # Rasterization modes data
+        self.render_mode_data = {
+            RenderMode.RGB: {},
+            RenderMode.GRAD: {},
+            RenderMode.TEX_SIZE: {},
+            RenderMode.SH: {}
+        }
 
     def get_textures(self):
         # textures: [N, L, L, 4]
@@ -668,6 +820,134 @@ class Runner:
             extra,
             info,
         )
+    
+    def rasterize_splats_with_mode(
+        self,
+        mode: str,
+        camtoworlds: Tensor,
+        Ks: Tensor,
+        width: int,
+        height: int,
+        **kwargs,
+    ) -> Tuple[Tensor, Tensor, Tensor, Tensor, Tensor, Tensor, Dict]:
+        means = self.splats["means"]  # [N, 3]
+        # quats = F.normalize(self.splats["quats"], dim=-1)  # [N, 4]
+        # rasterization does normalization internally
+        quats = self.splats["quats"]  # [N, 4]
+        scales = torch.exp(self.splats["scales"])  # [N, 3]
+
+        opacities = torch.sigmoid(self.splats["opacities"]) # [N,]
+        
+        image_ids = kwargs.pop("image_ids", None)
+        if self.cfg.app_opt:
+            colors = self.app_module(
+                features=self.splats["features"],
+                embed_ids=image_ids,
+                dirs=means[None, :, :] - camtoworlds[:, None, :3, 3],
+                sh_degree=kwargs.pop("sh_degree", self.cfg.sh_degree),
+            )
+            colors = colors + self.splats["colors"]
+            colors = torch.sigmoid(colors)
+        else:
+            colors = torch.cat([self.splats["sh0"], self.splats["shN"]], 1)  # [N, K, 3]
+
+        assert self.cfg.antialiased is False, "Antialiased is not supported for 2DGS"
+
+        match mode:
+            case RenderMode.RGB:
+                pass
+            case RenderMode.GRAD:
+                grad2d = self.texture_strategy_state['grad2d']
+                threshold = self.viewer.gui_handles['grad2d_slider'].value
+                mask = grad2d > threshold
+                self.viewer.gui_handles['grad2d_count'].value = mask.sum().item()
+                # set opacity to full
+                opacities[mask] = 1.0
+                # set color to red
+                colors[mask,0,:] = rgb_to_sh(torch.Tensor([1.0, 0.0, 0.0]).cuda())
+
+                # TODO: set texture to black
+            case RenderMode.TEX_SIZE:
+                # TODO: set color to texture size
+                # TODO: set texture to black
+                pass
+            case RenderMode.SH:
+                # TODO: set texture to black
+                pass
+
+        extra = {}
+
+        if self.model_type == "2dgs":
+            (
+                render_colors,
+                render_alphas,
+                render_normals,
+                normals_from_depth,
+                render_distort,
+                render_median,
+                _,
+                _,
+                info,
+            ) = rasterization_2dgs(
+                means=means,
+                quats=quats,
+                scales=scales,
+                opacities=opacities,
+                colors=colors,
+                viewmats=torch.linalg.inv(camtoworlds),  # [C, 4, 4]
+                Ks=Ks,  # [C, 3, 3]
+                width=width,
+                height=height,
+                packed=self.cfg.packed,
+                absgrad=self.cfg.absgrad,
+                sparse_grad=self.cfg.sparse_grad,
+                **kwargs,
+            )
+        elif self.model_type == "textured_gaussians":
+            textures = self.get_textures()
+            textures_packed = self.get_textures_packed()
+            (
+                render_colors,
+                render_alphas,
+                render_normals,
+                normals_from_depth,
+                render_distort,
+                render_median,
+                _,
+                _,
+                _,
+                _,
+                _,
+                info,
+            ) = rasterization_packed_textured_gaussians(
+                means=means,
+                quats=quats,
+                scales=scales,
+                opacities=opacities,
+                colors=colors,
+                textures=textures,
+                textures_packed=textures_packed,  # [3, \sum(N_i * H_i * W_i)]
+                texture_dims=self.constants["texture_dims"],  # [N, 2]
+                texture_offsets= self.constants["texture_offsets"],  # [N, 1]
+                viewmats=torch.linalg.inv(camtoworlds),  # [C, 4, 4]
+                Ks=Ks,  # [C, 3, 3]
+                width=width,
+                height=height,
+                packed=self.cfg.packed,
+                absgrad=self.cfg.absgrad,
+                sparse_grad=self.cfg.sparse_grad,
+                **kwargs,
+            )
+        return (
+            render_colors,
+            render_alphas,
+            render_normals,
+            normals_from_depth,
+            render_distort,
+            render_median,
+            extra,
+            info,
+        )
 
     def train(self):
         cfg = self.cfg
@@ -717,6 +997,9 @@ class Runner:
             'gs_dy_sum': torch.zeros_like(self.splats['opacities']),
         }
 
+        if not self.cfg.disable_viewer:
+            self.viewer.custom_update(self.trainset, self.valset)
+
         # Training loop.
         global_tic = time.time()
         pbar = tqdm.tqdm(range(init_step, max_steps))
@@ -725,7 +1008,14 @@ class Runner:
             self.step = step
 
             if not cfg.disable_viewer:
-                while self.viewer.state.status == "paused":
+                if step in cfg.pause_steps:
+                    self.viewer._training_tab_handles['pause_train_button'].visible = \
+                        not self.viewer._training_tab_handles['pause_train_button'].visible
+                    self.viewer._training_tab_handles['resume_train_button'].visible = \
+                        not self.viewer._training_tab_handles['resume_train_button'].visible
+                    if self.viewer.state != "completed":
+                        self.viewer.state = "paused" if self.viewer.state == "training" else "training"
+                while self.viewer.state == "paused":
                     time.sleep(0.01)
                 self.viewer.lock.acquire()
                 tic = time.time()
@@ -816,6 +1106,14 @@ class Runner:
                 state=self.strategy_state,
                 step=step,
                 info=info,
+            )
+
+            self.texture_strategy.step_pre_backward(
+                params=self.splats,
+                optimizers=self.optimizers,
+                state=self.texture_strategy_state,
+                step=step,
+                info=info
             )
 
             # loss
@@ -919,6 +1217,18 @@ class Runner:
                     )
                     canvas = canvas.reshape(-1, *canvas.shape[2:])
                     self.writer.add_image("train/render", canvas, step)
+                if step > self.texture_strategy.upscale_start_iter and step % self.texture_strategy.upscale_every == 0:
+                    grad2d: torch.Tensor = self.texture_strategy_state['grad2d']
+                    with torch.no_grad():
+                        hist = torch.histc(grad2d, bins=100, min=0.0, max=0.01).cpu().detach().numpy()
+                    self.writer.add_histogram(
+                        "grad2d/histogram", 
+                        hist,
+                        step
+                    )
+                    self.writer.add_scalar("grad2d/mean", grad2d.mean(), step)
+                    self.writer.add_scalar("grad2d/median", grad2d.median(), step)
+                    self.writer.add_scalar("grad2d/max", grad2d.max(), step)
                 self.writer.flush()
 
             # Run post-backward steps after backward and optimizer
@@ -942,6 +1252,15 @@ class Runner:
                 )
             else:
                 assert_never(self.cfg.strategy)
+
+            self.texture_strategy.step_post_backward(
+                    params=self.splats,
+                    optimizers=self.optimizers,
+                    state=self.texture_strategy_state,
+                    step=step,
+                    info=info,
+                    packed=cfg.packed,
+            )
 
             # Texture-update post-backwrard strategies
             # if step % 10 == 0:
@@ -1017,9 +1336,20 @@ class Runner:
                     num_train_rays_per_step * num_train_steps_per_sec
                 )
                 # Update the viewer state.
-                self.viewer.state.num_train_rays_per_sec = num_train_rays_per_sec
+                self.viewer.render_tab_state.num_train_rays_per_sec = num_train_rays_per_sec
                 # Update the scene.
                 self.viewer.update(step, num_train_rays_per_step)
+
+                if step > self.texture_strategy.upscale_start_iter and step % (self.texture_strategy.upscale_every-1) == 0:
+                    grad2d = self.texture_strategy_state["grad2d"]
+                    self.viewer.set_plot(
+                        name='grad_plot', 
+                        histc_input=grad2d, 
+                        title='gradient 2d abs',
+                        hist_bins=1000,
+                        hist_min_val=0,
+                        hist_max_val=0.1
+                    )
 
     @torch.no_grad()
     def eval(self, step: int):
@@ -1247,7 +1577,8 @@ class Runner:
         c2w = torch.from_numpy(c2w).float().to(self.device)
         K = torch.from_numpy(K).float().to(self.device)
 
-        render_colors, _, _, _, _, _, _, _ = self.rasterize_splats(
+        render_colors, _, _, _, _, _, _, _ = self.rasterize_splats_with_mode(
+            mode=self.viewer.gui_handles['render_mode'].value,
             camtoworlds=c2w[None],
             Ks=K[None],
             width=W,

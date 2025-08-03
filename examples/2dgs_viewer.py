@@ -15,6 +15,7 @@ from pathlib import Path
 from textured_gaussians._helper import load_test_data
 from textured_gaussians.distributed import cli
 from textured_gaussians.rendering import rasterization, rasterization_2dgs, rasterization_textured_gaussians
+from util_viewer import UtilViewer
 
 from nerfview import CameraState
 import nerfview
@@ -77,7 +78,7 @@ def main(local_rank: int, world_rank, world_size: int, args):
         return render_colors[0].cpu().detach().numpy()
 
     server = viser.ViserServer(port=args.port, verbose=False)
-    viewer = nerfview.Viewer(
+    viewer = UtilViewer(
         server=server,
         render_fn=viewer_render_fn,
         mode="rendering",

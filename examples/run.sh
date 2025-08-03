@@ -1,26 +1,17 @@
 CUDA_VISIBLE_DEVICES=0 python simple_trainer_textured_gaussians.py mcmc \
     --data_dir /workspace/data/Datasets/dtu/DTU/scan24 \
-    --result_dir results/dtu/2dgs/scan24 \
+    --pretrained_path /workspace/work/Outputs/dtu/2dgs_mcmc_pc100k_t4/scan24/ckpts/ckpt_29999.pt \
+    --result_dir /workspace/work/Outputs/dtu/ntex_rgba_pc100k_t1/scan24 \
     --dataset colmap \
-    --init_extent 1 \
-    --init_type "sfm" \
-    --model_type=2dgs \
-    --init_num_pts 10000 \
-    --strategy.cap-max 10000 \
-    --texture_resolution 50 \
-    --port 6070 --eval_steps -1 --disable_viewer --data_factor 2
-
-# CUDA_VISIBLE_DEVICES=0 python simple_trainer_textured_gaussians.py mcmc \
-#     --data_dir /workspace/data/Datasets/dtu/DTU/scan24 \
-#     --pretrained_path PRETRAINED_PATH \
-#     --result_dir results/dtu/textured_gaussians/scan24 \
-#     --dataset colmap \
-#     --init_type "pretrained" \
-#     --model_type=textured_gaussians \
-#     --init_num_pts 10000 \
-#     --strategy.cap-max 10000 \
-#     --strategy.refine-start-iter=1000000000000 \
-#     --textured_rgb \
-#     --textured_alpha \
-#     --texture_resolution 50 \
-#     --port 6070
+    --init_type pretrained \
+    --model_type=textured_gaussians \
+    --init_num_pts 100000 \
+    --strategy.cap-max 100000 \
+    --strategy.refine-start-iter=1000000000000 \
+    --textured_rgb \
+    --textured_alpha \
+    --texture_resolution 1 \
+    --port 6070 \
+    --eval_steps -1 \
+    --data_factor 2 \
+    --upscale-start-iter 0

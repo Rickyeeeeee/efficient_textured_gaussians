@@ -72,7 +72,6 @@ class UtilViewer(nerfview.Viewer):
                     self.selected_val_idx_gui.content = f"Selected Validation Index: {self.selected_val_idx}"
                     
         if train_dataset:
-            print(train_dataset[0]["K"])
             for i, data in enumerate(train_dataset):
                 image_name = data["image_name"]
                 image = data["image"].detach().cpu().numpy() / 255.0
