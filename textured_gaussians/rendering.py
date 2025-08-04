@@ -1231,9 +1231,10 @@ def rasterization_2dgs(
             sh_degree, dirs, colors, masks=radii > 0
         )  # [nnz, D] or [C, N, 3]
         # make it apple-to-apple with Inria's CUDA Backend.
+        print("color after SH", colors.min(), colors.max())
         colors = torch.clamp_min(colors + 0.5, 0.0)
 
-        # print("color after SH", colors.min(), colors.max())
+        print("color after SH", colors.min(), colors.max())
 
     # Rasterize to pixels
     if render_mode in ["RGB+D", "RGB+ED"]:
@@ -1904,9 +1905,10 @@ def rasterization_packed_textured_gaussians(
             sh_degree, dirs, colors, masks=radii > 0
         )  # [nnz, D] or [C, N, 3]
         # make it apple-to-apple with Inria's CUDA Backend.
+        print("color after SH", colors.min(), colors.max())
         colors = torch.clamp_min(colors + 0.5, 0.0)
 
-        # print("color after SH", colors.min(), colors.max())
+        print("color after SH", colors.min(), colors.max())
 
     # Rasterize to pixels
     if render_mode in ["RGB+D", "RGB+ED"]:

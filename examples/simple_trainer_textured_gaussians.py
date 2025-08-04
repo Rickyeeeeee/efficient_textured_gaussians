@@ -79,7 +79,7 @@ class Config:
     # Steps to save the model
     save_steps: List[int] = field(default_factory=lambda: [7_000, 30_000])
     # Steps to pause when training for debugging
-    pause_steps: List[int] = field(default_factory=lambda: [500, 10000])
+    pause_steps: List[int] = field(default_factory=lambda: [0, 10000])
 
     # Initialization strategy
     init_type: str = "sfm"
