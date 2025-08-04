@@ -79,7 +79,7 @@ class Config:
     # Steps to save the model
     save_steps: List[int] = field(default_factory=lambda: [7_000, 30_000])
     # Steps to pause when training for debugging
-    pause_steps: List[int] = field(default_factory=lambda: [0, 10000])
+    pause_steps: List[int] = field(default_factory=lambda: [])
 
     # Initialization strategy
     init_type: str = "sfm"
@@ -294,6 +294,10 @@ def create_splats_with_optimizers(
         ("quats", torch.nn.Parameter(quats), 1e-3),
         ("opacities", torch.nn.Parameter(opacities), 5e-2),
     ]
+    print(f"points: {points.min()}, {points.max()}")
+    print(f"scales: {scales.min()}, {scales.max()}")
+    print(f"quats: {quats.min()}, {quats.max()}")
+    print(f"opacities: {opacities.min()}, {opacities.max()}")
 
     constants = {}
 
@@ -318,16 +322,18 @@ def create_splats_with_optimizers(
     if cfg.model_type == "textured_gaussians":
         textures = torch.ones(points.shape[0], cfg.texture_resolution, cfg.texture_resolution, 4)
         textures[:, :, :, :3] = 0.1 # init color to low value
-        textures[:, :, :, 3] = 1.0 # init alpha to 1.0
+        textures[:, :, :, 3:] = 1.0 # init alpha to 1.0
         params.append(("textures", torch.nn.Parameter(textures), 2.5e-3))
 
         N, H, W, C = textures.shape
         assert C == 4, "Expected 4 channels (RGBA)"
-        textures_rgb = textures[:, :, :, :4]  # (N, H, W, 3)
+        textures_rgb = textures[:, :, :, :4]  # (N, H, W, 4)
 
         # Rearrange to (N, 3, H, W) then flatten to pack all textures
-        textures_rgb = textures_rgb.permute(0, 3, 1, 2).contiguous()  # (N, 3, H, W)
-        textures_packed = textures_rgb.reshape(4, -1)  # (3, N*H*W)
+        textures_rgb = textures_rgb.permute(0, 3, 1, 2).contiguous()  # (N, 4, H, W)
+        textures_packed = textures_rgb.reshape(4, -1)  # (4, N*H*W)
+        textures_packed[:3, :] = 0.1
+        textures_packed[3, :] = 1.0
 
         # Texture dimensions per texture (same for all)
         texture_dims = torch.tensor([[W, H]] * N, dtype=torch.int32, requires_grad=False, device=device)

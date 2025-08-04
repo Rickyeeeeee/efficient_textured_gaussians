@@ -1,7 +1,7 @@
 CUDA_VISIBLE_DEVICES=0 python simple_trainer_textured_gaussians.py mcmc \
     --data_dir /workspace/data/Datasets/dtu/DTU/scan24 \
     --pretrained_path /workspace/work/Outputs/dtu/2dgs_mcmc_pc100k_t4/scan24/ckpts/ckpt_29999.pt \
-    --result_dir /workspace/work/Outputs/dtu/ntex_rgba_pc100k_t1/scan24 \
+    --result_dir /workspace/work/Outputs/dtu/ntex_rgba_pc100k_t4/scan24 \
     --dataset colmap \
     --init_type pretrained \
     --model_type=textured_gaussians \
@@ -10,7 +10,7 @@ CUDA_VISIBLE_DEVICES=0 python simple_trainer_textured_gaussians.py mcmc \
     --strategy.refine-start-iter=1000000000000 \
     --textured_rgb \
     --textured_alpha \
-    --texture_resolution 1 \
+    --texture_resolution 4 \
     --port 6070 \
     --eval_steps -1 \
     --data_factor 2 \
