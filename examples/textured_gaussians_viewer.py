@@ -279,7 +279,7 @@ class GaussianViewerApp:
         for ckpt_path in self.args.ckpt:
             ckpt = torch.load(ckpt_path, map_location=self.device)["splats"]
             means = ckpt["means"]
-            quats = F.normalize(ckpt["quats"], p=2, dim=-1)
+            quats = ckpt["quats"]
             scales = torch.exp(ckpt["scales"])
             opacities = torch.sigmoid(ckpt["opacities"])
             sh0 = ckpt["sh0"]
@@ -287,19 +287,26 @@ class GaussianViewerApp:
             textures = ckpt["textures"]
 
             # Convert textures from [N, W, H, C] to packed format [C, N*W*H]
-            textures_packed = textures.permute(3, 0, 1, 2).reshape(textures.shape[3], -1)
+            textures_packed = ckpt['textures_packed']
+            rgb_textures = textures_packed[:3, :]
+            alpha_textures = textures_packed[3:4, :]
+            alpha_textures = alpha_textures / (alpha_textures.amax(dim=1, keepdim=True) + 1e-6) # normalize so that the max is 1
+            textures_packed = torch.cat([rgb_textures, alpha_textures], dim=0) # [4, \sum(N_i * H_i * W_i)]
+            textures_packed = textures_packed.clamp(0.0, 1.0)
 
             N, W, H, C = textures.shape
 
             # Texture dimensions: [N, 2] with [W, H] for each texture
-            texture_dims = torch.tensor([[W, H]] * N, device=textures.device, dtype=torch.int32)
+            # texture_dims = torch.tensor([[W, H]] * N, device=textures.device, dtype=torch.int32)
+            texture_dims = torch.load(ckpt_path, map_location=self.device)['texture_dims']
+            texture_offsets = torch.load(ckpt_path, map_location=self.device)['texture_offsets']
 
             # Offsets: [N, 1] where each is the cumulative sum of previous W*H areas
-            areas = texture_dims[:, 0] * texture_dims[:, 1]  # W * H for each texture -> [N]
-            texture_offsets = torch.zeros_like(areas)
+            # areas = texture_dims[:, 0] * texture_dims[:, 1]  # W * H for each texture -> [N]
+            # texture_offsets = torch.zeros_like(areas)
             # Calculate cumulative sum for offsets, excluding the last element
-            texture_offsets[1:] = torch.cumsum(areas, dim=0)[:-1]
-            texture_offsets = texture_offsets.unsqueeze(1)  # Reshape to [N, 1]
+            # texture_offsets[1:] = torch.cumsum(areas, dim=0)[:-1]
+            # texture_offsets = texture_offsets.unsqueeze(1)  # Reshape to [N, 1]
 
             colors = torch.cat([sh0, shN], dim=-2) # Concatenate SH coefficients
 
@@ -372,7 +379,7 @@ class GaussianViewerApp:
                 Ks=K[None], # Camera intrinsics
                 width=width,
                 height=height,
-                sh_degree=self.sh_degree # Spherical harmonics degree
+                sh_degree=self.sh_degree
             )
             render_images[i] = render_colors
             metrics['gs_contrib_count'][i] = gs_contrib_count

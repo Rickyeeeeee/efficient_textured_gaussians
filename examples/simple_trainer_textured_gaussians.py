@@ -1326,6 +1326,8 @@ class Runner:
                     {
                         "step": step,
                         "splats": self.splats.state_dict(),
+                        "texture_dims": self.constants['texture_dims'],
+                        "texture_offsets": self.constants['texture_offsets']
                     },
                     f"{self.ckpt_dir}/ckpt_{step}.pt",
                 )

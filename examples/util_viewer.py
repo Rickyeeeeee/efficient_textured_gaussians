@@ -118,7 +118,7 @@ class UtilViewer(nerfview.Viewer):
                 fov_y = 2 * np.arctan(image.shape[1] / (2 * fy))
                 frustum = self.server.scene.add_camera_frustum(
                     f"/val_dataset/{image_name}",
-                    fov=fov_y,
+                    fov=fov_x,
                     aspect=image.shape[1] / image.shape[0],
                     scale=0.05,
                     position=position,
