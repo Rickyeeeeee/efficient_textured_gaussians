@@ -4,7 +4,7 @@ from typing import Any, Dict, Tuple, Union
 import torch
 
 from .base import Strategy
-from .ops import duplicate, remove, reset_opa, split
+from .ops import rescale_texture
 from typing_extensions import Literal
 
 
@@ -54,6 +54,7 @@ class TextureStrategy(Strategy):
 
     def step_post_backward(
         self,
+        constants: Dict[str, torch.tensor],
         params: Union[Dict[str, torch.nn.Parameter], torch.nn.ParameterDict],
         optimizers: Dict[str, torch.optim.Optimizer],
         state: Dict[str, Any],
@@ -71,7 +72,26 @@ class TextureStrategy(Strategy):
             step > self.upscale_start_iter
             and step % self.upscale_every == 0
         ):
+            count = state["count"]
+            grads = state["grad2d"] / count.clamp_min(1)
+            device = grads.device
+
+            is_grad_high = grads > (self.upscale_grad2d * self.upscale_every / 100.0)
+
+            texture_dims_dst = constants['texture_dims'].clone()
+            texture_dims_dst[is_grad_high] *= 2
+
             # upscale textures
+            textures_packed, texture_offsets = rescale_texture(
+                textures_packed=params['textures_packed'],
+                texture_offsets_src=constants['texture_offsets'],
+                texture_dims_src=constants['texture_dims'],
+                texture_dims_dst=texture_dims_dst
+            )
+            params['textures_packed'] = textures_packed
+            constants["texture_offsets"] = texture_offsets
+            constants["texture_dims"] = texture_dims_dst
+
 
             # reset running stats
             state["grad2d"].zero_()

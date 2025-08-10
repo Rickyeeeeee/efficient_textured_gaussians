@@ -205,10 +205,10 @@ class Config:
 
     min_tex_res: int = 1
     max_tex_res: int = 16
-    upscale_grad2d: float = 0.0002
-    upscale_start_iter: int = 15000
-    upscale_stop_iter: int = 30000
-    upscale_every: int = 100
+    upscale_grad2d: float = 0.0008
+    upscale_start_iter: int = 0
+    upscale_stop_iter: int = 1002
+    upscale_every: int = 500
     upscale_abs_grad: bool = True
 
     def adjust_steps(self, factor: float):
@@ -865,10 +865,10 @@ class Runner:
             case RenderMode.GRAD:
                 grad2d = self.texture_strategy_state['grad2d']
                 threshold = self.viewer.gui_handles['grad2d_slider'].value
-                mask = grad2d > threshold
+                mask = (grad2d / (self.step % self.cfg.upscale_every) * 100.0) > threshold
                 self.viewer.gui_handles['grad2d_count'].value = mask.sum().item()
                 # set opacity to full
-                opacities[mask] = 1.0
+                # opacities[mask] = 1.0
                 # set color to red
                 colors[mask,0,:] = rgb_to_sh(torch.Tensor([1.0, 0.0, 0.0]).cuda())
 
@@ -988,7 +988,7 @@ class Runner:
             self.trainset,
             batch_size=cfg.batch_size,
             shuffle=True,
-            num_workers=4,
+            num_workers=2,
             persistent_workers=True,
             pin_memory=True,
         )
@@ -1100,11 +1100,12 @@ class Runner:
 
             # record extras
             with torch.no_grad():
-                accumulated_stats['gs_contrib_count'] += extra['gs_contrib_count']
-                accumulated_stats['gs_contrib_sum'] += extra['gs_contrib_sum']
-                accumulated_stats['gs_weight_sum'] += extra['gs_weight_sum']
-                accumulated_stats['gs_dx_sum'] += extra['gs_dx_sum']
-                accumulated_stats['gs_dy_sum'] += extra['gs_dy_sum']
+                if self.model_type == "textured_gaussians":
+                    accumulated_stats['gs_contrib_count'] += extra['gs_contrib_count']
+                    accumulated_stats['gs_contrib_sum'] += extra['gs_contrib_sum']
+                    accumulated_stats['gs_weight_sum'] += extra['gs_weight_sum']
+                    accumulated_stats['gs_dx_sum'] += extra['gs_dx_sum']
+                    accumulated_stats['gs_dy_sum'] += extra['gs_dy_sum']
 
             self.strategy.step_pre_backward(
                 params=self.splats,
@@ -1223,8 +1224,8 @@ class Runner:
                     )
                     canvas = canvas.reshape(-1, *canvas.shape[2:])
                     self.writer.add_image("train/render", canvas, step)
-                if step > self.texture_strategy.upscale_start_iter and step % self.texture_strategy.upscale_every == 0:
-                    grad2d: torch.Tensor = self.texture_strategy_state['grad2d']
+                if step > self.texture_strategy.upscale_start_iter:
+                    grad2d: torch.Tensor = self.texture_strategy_state['grad2d'].clone() / (self.step % self.cfg.upscale_every) * 100.
                     with torch.no_grad():
                         hist = torch.histc(grad2d, bins=100, min=0.0, max=0.01).cpu().detach().numpy()
                     self.writer.add_histogram(
@@ -1260,6 +1261,7 @@ class Runner:
                 assert_never(self.cfg.strategy)
 
             self.texture_strategy.step_post_backward(
+                    constants=self.constants,
                     params=self.splats,
                     optimizers=self.optimizers,
                     state=self.texture_strategy_state,
@@ -1267,21 +1269,6 @@ class Runner:
                     info=info,
                     packed=cfg.packed,
             )
-
-            # Texture-update post-backwrard strategies
-            # if step % 10 == 0:
-            #     target_stat = accumulated_stats["gs_weight_sum"] / 10.0
-            #     median = target_stat.median()
-            #     impor_idx = target_stat > median
-
-            #     texture_dims = self.constants['texture_dims'].clone()
-            #     texture_dims[~impor_idx] = torch.tensor([8, 8], device=texture_dims.device, dtype=torch.int)
-            #     texture_dims[impor_idx] = torch.tensor([16, 16], device=texture_dims.device, dtype=torch.int)
-
-            #     self.resize_textures_packed(texture_dims)
-
-            #     # Reset accumulation
-            #     accumulated_stats = {k: torch.zeros_like(self.splats['opacities']) for k in accumulated_stats}
 
             # Turn Gradients into Sparse Tensor before running optimizer
             if cfg.sparse_grad:
@@ -1322,15 +1309,24 @@ class Runner:
                 print("Step: ", step, stats)
                 with open(f"{self.stats_dir}/train_step{step:04d}.json", "w") as f:
                     json.dump(stats, f)
-                torch.save(
-                    {
-                        "step": step,
-                        "splats": self.splats.state_dict(),
-                        "texture_dims": self.constants['texture_dims'],
-                        "texture_offsets": self.constants['texture_offsets']
-                    },
-                    f"{self.ckpt_dir}/ckpt_{step}.pt",
-                )
+                if self.cfg.model_type == "textured_gaussians":
+                    torch.save(
+                        {
+                            "step": step,
+                            "splats": self.splats.state_dict(),
+                            "texture_dims": self.constants['texture_dims'],
+                            "texture_offsets": self.constants['texture_offsets']
+                        },
+                        f"{self.ckpt_dir}/ckpt_{step}.pt",
+                    )
+                else:
+                    torch.save(
+                        {
+                            "step": step,
+                            "splats": self.splats.state_dict(),
+                        },
+                        f"{self.ckpt_dir}/ckpt_{step}.pt",
+                    )
 
             # eval the full set
             if step in [i - 1 for i in cfg.eval_steps] or step == max_steps - 1:
@@ -1348,11 +1344,11 @@ class Runner:
                 # Update the scene.
                 self.viewer.update(step, num_train_rays_per_step)
 
-                if step > self.texture_strategy.upscale_start_iter and step % (self.texture_strategy.upscale_every-1) == 0:
+                if step > self.texture_strategy.upscale_start_iter and step % 100 == 0:
                     grad2d = self.texture_strategy_state["grad2d"]
                     self.viewer.set_plot(
                         name='grad_plot', 
-                        histc_input=grad2d, 
+                        histc_input=grad2d/(step % self.cfg.upscale_every), 
                         title='gradient 2d abs',
                         hist_bins=1000,
                         hist_min_val=0,
@@ -1367,7 +1363,7 @@ class Runner:
         device = self.device
 
         valloader = torch.utils.data.DataLoader(
-            self.valset, batch_size=1, shuffle=False, num_workers=1
+            self.valset, batch_size=1, shuffle=False, num_workers=2
         )
         ellipse_time = 0
         metrics = {"psnr": [], "ssim": [], "lpips": []}

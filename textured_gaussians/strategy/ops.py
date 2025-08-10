@@ -1,5 +1,5 @@
 import numpy as np
-from typing import Callable, Dict, List, Union
+from typing import Callable, Dict, List, Union, Tuple
 
 import torch
 import torch.nn.functional as F
@@ -395,3 +395,46 @@ def inject_noise_to_position(
     )
     noise = torch.einsum("bij,bj->bi", covars, noise)
     params["means"].add_(noise)
+
+@torch.no_grad()
+def rescale_texture(
+    textures_packed: torch.Tensor,
+    texture_offsets_src: torch.Tensor,
+    texture_dims_src: torch.Tensor,
+    texture_dims_dst: torch.Tensor
+):
+    """
+
+    Args:
+        textures_packed: torch.Tensor,
+        texture_dims: torch.Tensor,
+        texture_offsets: torch.Tensor,
+        resolutions: torch.Tensor
+    """
+
+    device = textures_packed.device
+    texture_areas = (texture_dims_dst[...,0] * texture_dims_dst[...,1]).unsqueeze(-1)
+    texture_offsets_dst = torch.ones_like(texture_offsets_src, device=device)
+    texture_offsets_dst[1:,...] = (torch.cumsum(input=texture_areas, dim=0))[:-1,...]
+
+    textures_src: Tensor = textures_packed
+    textures_dst = torch.zeros((4, torch.cumsum(input=texture_areas, dim=0)[-1]), device=device)
+
+    # Down sample (Averaging)
+    for dim_dst, offset_dst, dim_src, offset_src in zip(texture_dims_dst, texture_offsets_dst, texture_dims_src, texture_offsets_src):
+        tex_area_src = dim_src[0] * dim_src[1]
+        tex_src = textures_src[:,offset_src:offset_src+tex_area_src].reshape(4, dim_src[0], dim_src[1]).unsqueeze(0)
+
+        tex_sampled = F.interpolate(
+            tex_src,
+            size=(dim_dst[0], dim_dst[1]),
+            mode='area'
+        )
+
+        tex_area_dst = dim_dst[0] * dim_dst[1]
+        tex_sampled = tex_sampled.squeeze(0).reshape(4, tex_area_dst)
+        textures_dst[:,offset_dst:offset_dst+tex_area_dst] = tex_sampled
+    
+    textures_src = textures_dst
+
+    return textures_dst, texture_offsets_dst
