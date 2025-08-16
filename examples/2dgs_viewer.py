@@ -62,7 +62,7 @@ def main(local_rank: int, world_rank, world_size: int, args):
         c2w = torch.tensor(camera_state.c2w).to(device, dtype=torch.float32)
         K = torch.tensor(camera_state.get_K([width, height])).to(device, dtype=torch.float32)
 
-        render_colors, _, _, _, _, _, _, _, _ = rasterization_2dgs(
+        render_colors, *_ = rasterization_2dgs(
             means=means,
             quats=quats,
             scales=scales,

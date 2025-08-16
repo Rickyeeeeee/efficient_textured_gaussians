@@ -441,9 +441,6 @@ class TrainViewer(UtilViewer):
                         pass
                 self.rerender(_)
 
-            self.server.gui.add_markdown(
-                content='texture size plot'
-            )
             self.gui_handles['texture_size_plot'] = self.server.gui.add_plotly(
                 figure=go.Figure()
             )
@@ -478,6 +475,94 @@ class TrainViewer(UtilViewer):
             title=title
         ).update_layout(margin=dict(l=10, r=10, t=30, b=10))
         self.gui_handles[name].figure = fig
+
+    def plot_3d_histogram_bars(
+        self,
+        data: np.ndarray,
+        bins=(20, 20),
+        bar_scale=0.9,
+        colorscale="Viridis",
+        renderer=None,          # e.g. "browser", "vscode", "notebook_connected"
+        save_html=None          # e.g. "3d_hist.html"
+    ):
+        """
+        Plot a 3D bar-chart histogram for 2D points using Plotly Mesh3d.
+
+        data: (n,2) array of (x,y) points
+        bins: (bx, by) or [edges_x, edges_y]
+        bar_scale: 0..1, shrink bars inside each bin so gaps are visible
+        """
+        if data.ndim != 2 or data.shape[1] != 2:
+            raise ValueError("data must have shape (n, 2)")
+
+        # 2D histogram
+        H, xedges, yedges = np.histogram2d(data[:,0], data[:,1], bins=bins)
+
+        # bin centers and widths (per-bin to be safe)
+        x_cent = 0.5*(xedges[:-1] + xedges[1:])
+        y_cent = 0.5*(yedges[:-1] + yedges[1:])
+        x_w = np.diff(xedges)
+        y_w = np.diff(yedges)
+
+        # Collect vertices and faces for all cuboids
+        X, Y, Z = [], [], []
+        I, J, K = [], [], []
+        intensity = []
+
+        def add_bar(x0, x1, y0, y1, z):
+            """Add one cuboid [x0,x1]x[y0,y1]x[0,z] as 8 verts + 12 triangles."""
+            base = len(X)
+            # order: 0..3 bottom, 4..7 top (see diagram in code comments)
+            xs = [x0, x1, x1, x0, x0, x1, x1, x0]
+            ys = [y0, y0, y1, y1, y0, y0, y1, y1]
+            zs = [0, 0, 0, 0, z, z, z, z]
+            X.extend(xs); Y.extend(ys); Z.extend(zs)
+            intensity.extend([z]*8)
+
+            # 12 triangles (two per face)
+            faces = [
+                (0,1,2),(0,2,3),       # bottom
+                (4,6,5),(4,7,6),       # top
+                (0,5,1),(0,4,5),       # side x+
+                (1,6,2),(1,5,6),       # side y+
+                (2,7,3),(2,6,7),       # side x-
+                (3,4,0),(3,7,4)        # side y-
+            ]
+            for a,b,c in faces:
+                I.append(base+a); J.append(base+b); K.append(base+c)
+
+        # build bars
+        for ix, xc in enumerate(x_cent):
+            dx = x_w[ix]*bar_scale
+            x0, x1 = xc - dx/2, xc + dx/2
+            for iy, yc in enumerate(y_cent):
+                count = int(H[ix, iy])  # H is (len(xedges)-1, len(yedges)-1)
+                if count <= 0:
+                    continue
+                dy = y_w[iy]*bar_scale
+                y0, y1 = yc - dy/2, yc + dy/2
+                add_bar(x0, x1, y0, y1, count)
+
+        fig = go.Figure(go.Mesh3d(
+            x=X, y=Y, z=Z,
+            i=I, j=J, k=K,
+            intensity=intensity, colorscale=colorscale, showscale=True,
+            flatshading=True, opacity=1.0,
+            lighting=dict(ambient=0.6, diffuse=0.7, specular=0.1),
+            lightposition=dict(x=100, y=200, z=0)
+        ))
+
+        fig.update_layout(
+            scene=dict(
+                xaxis_title="X",
+                yaxis_title="Y",
+                zaxis_title="Count",
+                aspectmode="data"
+            ),
+            title="3D Histogram (bars) from 2D data"
+        )
+
+        self.gui_handles['texture_size_plot'].figure = fig
 
 class Runner:
     """Engine for training and testing."""
@@ -988,12 +1073,11 @@ class Runner:
             self.trainset,
             batch_size=cfg.batch_size,
             shuffle=True,
-            num_workers=2,
+            num_workers=4,
             persistent_workers=True,
             pin_memory=True,
         )
-        it = iter(trainloader)
-        trainloader_iter, trainloader_iter_copy = tee(it)
+        trainloader_iter  = iter(trainloader)
 
         accumulated_stats = {
             'gs_contrib_count': torch.zeros_like(self.splats['opacities']),
@@ -1115,13 +1199,14 @@ class Runner:
                 info=info,
             )
 
-            self.texture_strategy.step_pre_backward(
-                params=self.splats,
-                optimizers=self.optimizers,
-                state=self.texture_strategy_state,
-                step=step,
-                info=info
-            )
+            if self.cfg.model_type == 'textured_gaussians':
+                self.texture_strategy.step_pre_backward(
+                    params=self.splats,
+                    optimizers=self.optimizers,
+                    state=self.texture_strategy_state,
+                    step=step,
+                    info=info
+                )
 
             # loss
             l1loss = F.l1_loss(colors, pixels)
@@ -1224,7 +1309,7 @@ class Runner:
                     )
                     canvas = canvas.reshape(-1, *canvas.shape[2:])
                     self.writer.add_image("train/render", canvas, step)
-                if step > self.texture_strategy.upscale_start_iter:
+                if step > self.texture_strategy.upscale_start_iter and step < self.texture_strategy.upscale_stop_iter:
                     grad2d: torch.Tensor = self.texture_strategy_state['grad2d'].clone() / (self.step % self.cfg.upscale_every) * 100.
                     with torch.no_grad():
                         hist = torch.histc(grad2d, bins=100, min=0.0, max=0.01).cpu().detach().numpy()
@@ -1260,15 +1345,16 @@ class Runner:
             else:
                 assert_never(self.cfg.strategy)
 
-            self.texture_strategy.step_post_backward(
-                    constants=self.constants,
-                    params=self.splats,
-                    optimizers=self.optimizers,
-                    state=self.texture_strategy_state,
-                    step=step,
-                    info=info,
-                    packed=cfg.packed,
-            )
+            if self.model_type == "textured_gaussians":
+                self.texture_strategy.step_post_backward(
+                        constants=self.constants,
+                        params=self.splats,
+                        optimizers=self.optimizers,
+                        state=self.texture_strategy_state,
+                        step=step,
+                        info=info,
+                        packed=cfg.packed,
+                )
 
             # Turn Gradients into Sparse Tensor before running optimizer
             if cfg.sparse_grad:
@@ -1367,7 +1453,8 @@ class Runner:
         )
         ellipse_time = 0
         metrics = {"psnr": [], "ssim": [], "lpips": []}
-        for i, data in enumerate(valloader):
+        per_view_metrics = {}
+        for i, data in tqdm.tqdm(enumerate(valloader)):
             camtoworlds = data["camtoworld"].to(device)
             Ks = data["K"].to(device)
             pixels = data["image"].to(device) / 255.0
@@ -1454,7 +1541,6 @@ class Runner:
             )
 
             # write distortions
-
             render_dist = render_distort
             dist_max = torch.max(render_dist)
             dist_min = torch.min(render_dist)
@@ -1471,9 +1557,18 @@ class Runner:
 
             pixels = pixels.permute(0, 3, 1, 2)  # [1, 3, H, W]
             colors = colors.permute(0, 3, 1, 2)  # [1, 3, H, W]
-            metrics["psnr"].append(self.psnr(colors, pixels))
-            metrics["ssim"].append(self.ssim(colors, pixels))
-            metrics["lpips"].append(self.lpips(colors, pixels))
+            psnr = self.psnr(colors, pixels)
+            ssim = self.ssim(colors, pixels)
+            lpips = self.lpips(colors, pixels)  
+            per_view_metrics[data["image_name"][0]] = {
+                "id": data['image_id'].item(),
+                "psnr": psnr.item(),
+                "ssim": ssim.item(),
+                "lpips": lpips.item()
+            }
+            metrics["psnr"].append(psnr)
+            metrics["ssim"].append(ssim)
+            metrics["lpips"].append(lpips)
 
         ellipse_time /= len(valloader)
 
@@ -1495,6 +1590,8 @@ class Runner:
         }
         with open(f"{self.stats_dir}/val_step{step:04d}.json", "w") as f:
             json.dump(stats, f)
+        with open(f"{self.stats_dir}/val_step{step:04d}_per_view.json", "w") as f:
+            json.dump(per_view_metrics, f)
         # save stats to tensorboard
         for k, v in stats.items():
             self.writer.add_scalar(f"val/{k}", v, step)
@@ -1561,7 +1658,7 @@ class Runner:
             canvas = (canvas.cpu().numpy() * 255).astype(np.uint8)
             canvas_all.append(canvas)
 
-        # save to video
+        # save to videowith
         video_dir = f"{cfg.result_dir}/videos"
         os.makedirs(video_dir, exist_ok=True)
         writer = imageio.get_writer(f"{video_dir}/traj_{step}.mp4", fps=30)
@@ -1601,6 +1698,8 @@ def main(cfg: Config):
         ckpt = torch.load(cfg.ckpt, map_location=runner.device)
         for k in runner.splats.keys():
             runner.splats[k].data = ckpt["splats"][k]
+        for k in runner.constants.keys():
+            runner.constants[k] = ckpt[k]
         runner.eval(step=ckpt["step"])
         runner.render_traj(step=ckpt["step"])
     else:

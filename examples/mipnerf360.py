@@ -3,8 +3,10 @@ import itertools
 
 dataset_dir = "/workspace/data/Datasets/MipNerf360"
 output_dir = "/workspace/work/Outputs/MipNerf360"
-point_counts = [10000, 50000, 100000]
-texture_resolution = 4
+# point_counts = [10000, 50000, 100000]
+point_counts = [1000000]
+tex_res_start = 1
+tex_res_end = 4
 data_factor = 4
 scenes = [
     'bicycle',
@@ -17,12 +19,14 @@ scenes = [
 ]
 has_rgb = True
 has_alpha = True
-
+render = False
 is_eval = False
 
 for scene, point_count in itertools.product(scenes, point_counts):
+    method_name = "2dgs_mcmc"
     cmd_2dgs = (
         f"CUDA_VISIBLE_DEVICES=0 python simple_trainer_textured_gaussians.py mcmc "
+        f"{f"--ckpt {output_dir}/{method_name}/pc{point_count}/{scene}/ckpts/ckpt_29999.pt " if render else ""}"
         f"--max_steps 30000 "
         f"--eval_steps 7000 30000 "
         f"--save_steps 7000 30000 "
@@ -39,15 +43,19 @@ for scene, point_count in itertools.product(scenes, point_counts):
         f"--data_factor {data_factor} "
         f"--upscale_start_iter 100000000"
     )
-    if os.path.isdir(f"{output_dir}/2dgs_mcmc/pc{point_count}/{scene}/video"):
+    if os.path.isdir(f"{output_dir}/2dgs_mcmc/pc{point_count}/{scene}/videos") and not render:
+        print(f"[INFO] Skipping scene {scene} for 2DGS as videos directory already exists.")
+    else:
         print(f"[INFO] Running command for scene {scene}: {cmd_2dgs}")
         os.system(cmd_2dgs)
 
-    cmd_textured_gaussians = (
+    method_name = f'ntex_{'rgb' if has_rgb else ''}{'a' if has_alpha else ''}'
+    cmd_ntex = (
         f"CUDA_VISIBLE_DEVICES=0 python simple_trainer_textured_gaussians.py mcmc "
+        f"{f"--ckpt {output_dir}/{method_name}/pc{point_count}/{scene}/ckpts/ckpt_29999.pt " if render else ""}"
         f"--data_dir {dataset_dir}/{scene} "
         f"--pretrained_path {output_dir}/2dgs_mcmc/pc{point_count}/{scene}/ckpts/ckpt_29999.pt "
-        f"--result_dir {output_dir}/textured_gaussians_{'rgb' if has_rgb else ''}{'a' if has_alpha else ''}/pc{point_count}/{scene} "
+        f"--result_dir {output_dir}/{method_name}/pc{point_count}/{scene} "
         f"--dataset colmap "
         f"--init_type pretrained "
         f"--model_type=textured_gaussians "
@@ -56,12 +64,41 @@ for scene, point_count in itertools.product(scenes, point_counts):
         f"--strategy.refine-start-iter=1000000000000 "
         f"{'--textured_rgb ' if has_rgb else ''}"
         f"{'--textured_alpha ' if has_alpha else ''}"
-        f"--texture_resolution {texture_resolution} "
+        f"--texture_resolution {tex_res_start} "
         f"--port 6070 "
         f"--disable_viewer "
-        f"--data_factor {data_factor}"
+        f"--data_factor {data_factor} "
+        f"--upscale_grad2d=0.00002 "
+        f"--upscale_start_iter=0 "
+        f"--upscale_stop_iter=1002 "
+        f"--upscale_every=500 "
     )
-    if os.path.isdir(f"{output_dir}/textured_gaussians/pc{point_count}/{scene}/video"):
-        print(f"[INFO] Running command for scene {scene}: {cmd_textured_gaussians}")
-        os.system(cmd_textured_gaussians)
-    
+    print(f"[INFO] Running command for scene {scene}: {cmd_ntex}")
+    os.system(cmd_ntex)
+
+    method_name = f'textured_gaussians_{'rgb' if has_rgb else ''}{'a' if has_alpha else ''}'
+    cmd_textured_gaussians = (
+        f"CUDA_VISIBLE_DEVICES=0 python simple_trainer_textured_gaussians.py mcmc "
+        f"{f"--ckpt {output_dir}/{method_name}/pc{point_count}/{scene}/ckpts/ckpt_29999.pt " if render else ""}"
+        f"--data_dir {dataset_dir}/{scene} "
+        f"--pretrained_path {output_dir}/2dgs_mcmc/pc{point_count}/{scene}/ckpts/ckpt_29999.pt "
+        f"--result_dir {output_dir}/{method_name}/pc{point_count}/{scene} "
+        f"--dataset colmap "
+        f"--init_type pretrained "
+        f"--model_type=textured_gaussians "
+        f"--init_num_pts {point_count} "
+        f"--strategy.cap-max {point_count} "
+        f"--strategy.refine-start-iter=1000000000000 "
+        f"{'--textured_rgb ' if has_rgb else ''}"
+        f"{'--textured_alpha ' if has_alpha else ''}"
+        f"--texture_resolution {tex_res_end} "
+        f"--port 6070 "
+        f"--disable_viewer "
+        f"--data_factor {data_factor} "
+        f"--upscale_grad2d=0.00002 "
+        f"--upscale_start_iter=1000000 "
+        f"--upscale_stop_iter=1002 "
+        f"--upscale_every=500 "
+    )
+    print(f"[INFO] Running command for scene {scene}: {cmd_textured_gaussians}")
+    os.system(cmd_textured_gaussians)

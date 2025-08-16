@@ -5,9 +5,11 @@ import time
 import random
 from typing import List, Tuple, Dict
 from dataclasses import dataclass
+from enum import Enum
 
 import imageio
 import plotly.express as px
+import plotly.graph_objects as go
 import numpy as np
 import torch
 import torch.nn.functional as F
@@ -17,6 +19,7 @@ import viser
 from pathlib import Path
 import plotly.graph_objects as go
 import plotly.subplots as sp
+from utils import rgb_to_sh
 from datasets.colmap import Dataset, Parser, BlenderDataset
 from textured_gaussians._helper import load_test_data
 from textured_gaussians.distributed import cli
@@ -47,6 +50,13 @@ HIST_MIN_VAL = 1.0
 HIST_MAX_VAL = 5000
 HIST_BINS = 1000
 
+class RenderMode(Enum):
+    RGB='RGB'
+    GRAD='grad'
+    TEX_SIZE='texture size'
+    SH='sh'
+    NO_TEX='no texture'
+
 class CustomViewer(UtilViewer):
     """
     Custom viewer class extending UtilViewer to integrate specific UI elements
@@ -72,18 +82,21 @@ class CustomViewer(UtilViewer):
         self._gt_train_fn: callable = None
         self._gt_val_fn: callable = None
 
+        self.render_mode = RenderMode.RGB
+        self.tex_value: int = 0
+
         super().__init__(*args, **kwargs)
 
     def _init_rendering_tab(self):
         """Initializes the rendering tab and custom rendering folder."""
         super()._init_rendering_tab()
         self._custom_render_handles = {}
+        self._visualization_folder = self.server.gui.add_folder("Visualization")
         self._custom_rendering_folder = self.server.gui.add_folder("Custom Rendering")
 
     def _populate_rendering_tab(self):
         """Populates the custom rendering tab with plot checkboxes and placeholders for sliders."""
         super()._populate_rendering_tab()
-
         with self._custom_rendering_folder:
             # Helper function to create an on_update callback for sliders
             def make_on_update(callback, slider):
@@ -125,6 +138,45 @@ class CustomViewer(UtilViewer):
                 aspect=1.0, # Maintain aspect ratio
                 visible=True # Initially visible for debugging
             )
+            self.texture_plot_handle = self.server.gui.add_plotly(
+                figure=go.Figure(),
+                aspect=1.0,
+                visible=True
+            )
+
+        with self._visualization_folder:
+            render_mode_dropdown = self.server.gui.add_dropdown(
+                label='render mode',
+                options=[
+                    RenderMode.RGB,
+                    RenderMode.GRAD,
+                    RenderMode.TEX_SIZE,
+                    RenderMode.SH,
+                    RenderMode.NO_TEX
+                ],
+                initial_value=RenderMode.RGB
+            )
+
+            tex_slider = self.server.gui.add_slider(
+                label='texture size',
+                min=0,
+                max=16,
+                step=1,
+                initial_value=0,
+                visible=False
+            )
+
+            @tex_slider.on_update
+            def _(_):
+                self.tex_value = tex_slider.value
+                self.rerender(_)
+
+            @render_mode_dropdown.on_update
+            def _(_):
+                self.render_mode = render_mode_dropdown.value
+                tex_slider.visible = self.render_mode is RenderMode.TEX_SIZE
+                self.rerender(_)
+
 
     def set_rendering_functions(self, render_train_fn: callable, render_val_fn: callable,
                                 gt_train_fn: callable, gt_val_fn: callable):
@@ -228,6 +280,94 @@ class CustomViewer(UtilViewer):
             title=title
         )
         return fig.update_layout(margin=dict(l=10, r=10, t=30, b=10))
+    
+    def set_texture_plot(
+        self,
+        data: np.ndarray,
+        bins=(20, 20),
+        bar_scale=0.9,
+        colorscale="Viridis",
+        renderer=None,          # e.g. "browser", "vscode", "notebook_connected"
+        save_html=None          # e.g. "3d_hist.html"
+    ):
+        """
+        Plot a 3D bar-chart histogram for 2D points using Plotly Mesh3d.
+
+        data: (n,2) array of (x,y) points
+        bins: (bx, by) or [edges_x, edges_y]
+        bar_scale: 0..1, shrink bars inside each bin so gaps are visible
+        """
+        if data.ndim != 2 or data.shape[1] != 2:
+            raise ValueError("data must have shape (n, 2)")
+
+        # 2D histogram
+        H, xedges, yedges = np.histogram2d(data[:,0], data[:,1], bins=bins)
+
+        # bin centers and widths (per-bin to be safe)
+        x_cent = 0.5*(xedges[:-1] + xedges[1:])
+        y_cent = 0.5*(yedges[:-1] + yedges[1:])
+        x_w = np.diff(xedges)
+        y_w = np.diff(yedges)
+
+        # Collect vertices and faces for all cuboids
+        X, Y, Z = [], [], []
+        I, J, K = [], [], []
+        intensity = []
+
+        def add_bar(x0, x1, y0, y1, z):
+            """Add one cuboid [x0,x1]x[y0,y1]x[0,z] as 8 verts + 12 triangles."""
+            base = len(X)
+            # order: 0..3 bottom, 4..7 top (see diagram in code comments)
+            xs = [x0, x1, x1, x0, x0, x1, x1, x0]
+            ys = [y0, y0, y1, y1, y0, y0, y1, y1]
+            zs = [0, 0, 0, 0, z, z, z, z]
+            X.extend(xs); Y.extend(ys); Z.extend(zs)
+            intensity.extend([z]*8)
+
+            # 12 triangles (two per face)
+            faces = [
+                (0,1,2),(0,2,3),       # bottom
+                (4,6,5),(4,7,6),       # top
+                (0,5,1),(0,4,5),       # side x+
+                (1,6,2),(1,5,6),       # side y+
+                (2,7,3),(2,6,7),       # side x-
+                (3,4,0),(3,7,4)        # side y-
+            ]
+            for a,b,c in faces:
+                I.append(base+a); J.append(base+b); K.append(base+c)
+
+        # build bars
+        for ix, xc in enumerate(x_cent):
+            dx = x_w[ix]*bar_scale
+            x0, x1 = xc - dx/2, xc + dx/2
+            for iy, yc in enumerate(y_cent):
+                count = int(H[ix, iy])  # H is (len(xedges)-1, len(yedges)-1)
+                if count <= 0:
+                    continue
+                dy = y_w[iy]*bar_scale
+                y0, y1 = yc - dy/2, yc + dy/2
+                add_bar(x0, x1, y0, y1, count)
+
+        fig = go.Figure(go.Mesh3d(
+            x=X, y=Y, z=Z,
+            i=I, j=J, k=K,
+            intensity=intensity, colorscale=colorscale, showscale=True,
+            flatshading=True, opacity=1.0,
+            lighting=dict(ambient=0.6, diffuse=0.7, specular=0.1),
+            lightposition=dict(x=100, y=200, z=0)
+        ))
+
+        fig.update_layout(
+            scene=dict(
+                xaxis_title="X",
+                yaxis_title="Y",
+                zaxis_title="Count",
+                aspectmode="cube"
+            ),
+            title="3D Histogram (bars) from 2D data"
+        )
+
+        self.texture_plot_handle.figure = fig
 
 class GaussianViewerApp:
     """
@@ -365,14 +505,22 @@ class GaussianViewerApp:
         # Render each Gaussian model
         for i in range(num_ckpts):
             model = self.textured_gaussian_models[i]
+            colors = model.colors.clone()
+            textures_packed = model.textures_packed.clone()
+            match self.viewer.render_mode:
+                case RenderMode.TEX_SIZE:
+                    mask = model.texture_dims[...,0] >= self.viewer.tex_value
+                    colors[mask,0,:] = rgb_to_sh(torch.Tensor([1.0, 0.0, 0.0]).cuda())
+                case RenderMode.NO_TEX:
+                    textures_packed = torch.zeros_like(textures_packed)
             render_colors, *_, gs_contrib_sum, gs_contrib_count, gs_weight_sum, gs_dx_sum, gs_dy_sum, meta, = rasterization_packed_textured_gaussians(
                 means=model.means,
                 quats=model.quats,
                 scales=model.scales,
                 opacities=model.opacities,
-                colors=model.colors,
+                colors=colors,
                 textures=None, # Using packed textures
-                textures_packed=model.textures_packed,
+                textures_packed=textures_packed,
                 texture_dims=model.texture_dims,
                 texture_offsets=model.texture_offsets,
                 viewmats=torch.linalg.inv(c2w[None]), # Inverse of camera-to-world matrix
@@ -521,6 +669,12 @@ class GaussianViewerApp:
         # Update frustums and attach click callbacks in the viewer
         self.viewer.custom_update(train_dataset=self.trainset, val_dataset=self.valset)
         self.viewer.update_frustum_callback()
+
+        # texture_plot = plotl
+        self.viewer.set_texture_plot(
+            data=self.textured_gaussian_models[0].texture_dims.detach().cpu().numpy(),
+            bins=(3,3)
+        )
 
         print("Viewer running... Ctrl+C to exit.")
         # Keep the server running indefinitely

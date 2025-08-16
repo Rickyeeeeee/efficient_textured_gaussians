@@ -76,7 +76,11 @@ class TextureStrategy(Strategy):
             grads = state["grad2d"] / count.clamp_min(1)
             device = grads.device
 
-            is_grad_high = grads > (self.upscale_grad2d * self.upscale_every / 100.0)
+            is_grad_high = grads > self.upscale_grad2d
+            print(f'grads.min(): {grads.min()}')
+            print(f'grads.max(): {grads.max()}')
+            print(f'grads.mean(): {grads.mean()}')
+            print(f'Upscale points: {is_grad_high.sum()}')
 
             texture_dims_dst = constants['texture_dims'].clone()
             texture_dims_dst[is_grad_high] *= 2
