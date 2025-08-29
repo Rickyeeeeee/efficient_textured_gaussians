@@ -392,6 +392,7 @@ class GaussianViewerApp:
             render_fn=self._viewer_render_fn, # Main rendering function for the 3D scene
             mode="rendering",
         )
+        self.server.gui.set_panel_label("ntex viewer")
 
     def _load_datasets(self):
         """Loads the training and validation datasets based on command-line arguments."""
@@ -512,7 +513,8 @@ class GaussianViewerApp:
                     mask = model.texture_dims[...,0] >= self.viewer.tex_value
                     colors[mask,0,:] = rgb_to_sh(torch.Tensor([1.0, 0.0, 0.0]).cuda())
                 case RenderMode.NO_TEX:
-                    textures_packed = torch.zeros_like(textures_packed)
+                    textures_packed[:3, ...] = torch.zeros_like(textures_packed[:3, ...])
+                    textures_packed[-1, ...] = torch.ones_like(textures_packed[-1, ...])
             render_colors, *_, gs_contrib_sum, gs_contrib_count, gs_weight_sum, gs_dx_sum, gs_dy_sum, meta, = rasterization_packed_textured_gaussians(
                 means=model.means,
                 quats=model.quats,

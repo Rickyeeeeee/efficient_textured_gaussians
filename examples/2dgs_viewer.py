@@ -83,6 +83,8 @@ def main(local_rank: int, world_rank, world_size: int, args):
         render_fn=viewer_render_fn,
         mode="rendering",
     )
+    server.gui.set_panel_label("2dgs viewer")
+
     print("Viewer running... Ctrl+C to exit.")
     time.sleep(100000)
 
