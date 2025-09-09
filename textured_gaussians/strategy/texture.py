@@ -11,8 +11,14 @@ from typing_extensions import Literal
 @dataclass
 class TextureStrategy(Strategy):
 
+    # For texture resolution
     min_tex_res: int = 1
-    max_tex_res: int = 16
+    max_tex_res: int = 4
+
+    # For scale
+    min_aspect_ratio: float = 6.0
+    max_scale_for_thin: float = 0.05
+
     upscale_grad2d: float = 0.0002
     upscale_start_iter: int = 500
     upscale_stop_iter: int = 15000
@@ -72,6 +78,10 @@ class TextureStrategy(Strategy):
             step > self.upscale_start_iter
             and step % self.upscale_every == 0
         ):
+            print(f'min_tex_res: {self.min_tex_res}')
+            print(f'max_tex_res: {self.max_tex_res}')
+            print(f'min_aspect_ratio: {self.min_aspect_ratio}')
+            print(f'max_scale_for_thin: {self.max_scale_for_thin}')
             count = state["count"]
             grads = state["grad2d"] / count.clamp_min(1)
             device = grads.device
@@ -83,7 +93,21 @@ class TextureStrategy(Strategy):
             print(f'Upscale points: {is_grad_high.sum()}')
 
             texture_dims_dst = constants['texture_dims'].clone()
-            texture_dims_dst[is_grad_high] *= 2
+            # texture_dims_dst[is_grad_high] *= 2
+
+            scales = torch.exp(params['scales'])
+            is_thin_x = ((scales[:,0] / scales[:,1]) > self.min_aspect_ratio) & (scales[:,1] < self.max_scale_for_thin)
+            is_thin_y = ((scales[:,1] / scales[:,0]) > self.min_aspect_ratio) & (scales[:,0] < self.max_scale_for_thin)
+            texture_dims_dst[is_thin_x & is_grad_high][:,0] *= 2
+            texture_dims_dst[is_thin_y & is_grad_high][:,1] *= 2
+            texture_dims_dst[is_grad_high & ~(is_thin_y | is_thin_x)] *= 2
+
+            print(f'is_thin_x: {is_thin_x.sum()}')
+            print(f'is_thin_y: {is_thin_y.sum()}')
+            print(f'is_thin_x & is_grad_high: {(is_thin_x & is_grad_high).sum()}')
+            print(f'is_thin_y & is_grad_high: {(is_thin_y & is_grad_high).sum()}')
+            print(f'is_thin_x | is_thin_y: {(is_thin_x | is_thin_y).sum()}')
+            print(f'is_grad_high & ~(is_thin_x | is_thin_y): {(is_grad_high & ~(is_thin_y | is_thin_x)).sum()}')
 
             # upscale textures
             textures_packed, texture_offsets = rescale_texture(

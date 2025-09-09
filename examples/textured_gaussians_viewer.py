@@ -56,6 +56,7 @@ class RenderMode(Enum):
     TEX_SIZE='texture size'
     SH='sh'
     NO_TEX='no texture'
+    SCALE='scale'
 
 class CustomViewer(UtilViewer):
     """
@@ -84,6 +85,9 @@ class CustomViewer(UtilViewer):
 
         self.render_mode = RenderMode.RGB
         self.tex_value: int = 0
+        self.scale_x: bool = True
+        self.scale_value = 10.0
+        self.min_scale_value = 10.0
 
         super().__init__(*args, **kwargs)
 
@@ -152,7 +156,8 @@ class CustomViewer(UtilViewer):
                     RenderMode.GRAD,
                     RenderMode.TEX_SIZE,
                     RenderMode.SH,
-                    RenderMode.NO_TEX
+                    RenderMode.NO_TEX,
+                    RenderMode.SCALE
                 ],
                 initial_value=RenderMode.RGB
             )
@@ -171,10 +176,40 @@ class CustomViewer(UtilViewer):
                 self.tex_value = tex_slider.value
                 self.rerender(_)
 
+            scale_slider = self.server.gui.add_slider(
+                label='scale porpotion',
+                min=1.,
+                max=100.,
+                step=0.01,
+                initial_value=3.,
+                visible=False
+            )
+
+            @scale_slider.on_update
+            def _(_):
+                self.scale_value = scale_slider.value
+                self.rerender(_)
+
+            min_scale_slider = self.server.gui.add_slider(
+                label='min scale',
+                min=0.,
+                max=1.,
+                step=0.01,
+                initial_value=0.1,
+                visible=False
+            )
+
+            @min_scale_slider.on_update
+            def _(_):
+                self.min_scale_value = min_scale_slider.value
+                self.rerender(_)
+
             @render_mode_dropdown.on_update
             def _(_):
                 self.render_mode = render_mode_dropdown.value
                 tex_slider.visible = self.render_mode is RenderMode.TEX_SIZE
+                scale_slider.visible = self.render_mode is RenderMode.SCALE
+                min_scale_slider.visible = self.render_mode is RenderMode.SCALE
                 self.rerender(_)
 
 
@@ -515,6 +550,13 @@ class GaussianViewerApp:
                 case RenderMode.NO_TEX:
                     textures_packed[:3, ...] = torch.zeros_like(textures_packed[:3, ...])
                     textures_packed[-1, ...] = torch.ones_like(textures_packed[-1, ...])
+                case RenderMode.SCALE:
+                    mask = (model.scales[:,0] / model.scales[:,1]) > self.viewer.scale_value
+                    mask |= (model.scales[:,1] / model.scales[:,0]) > self.viewer.scale_value
+                    mask &= model.scales[:,0] < self.viewer.min_scale_value
+                    mask &= model.scales[:,1] < self.viewer.min_scale_value
+                    colors[mask,0,:] = rgb_to_sh(torch.Tensor([1.0, 0.0, 0.0]).cuda())
+
             render_colors, *_, gs_contrib_sum, gs_contrib_count, gs_weight_sum, gs_dx_sum, gs_dy_sum, meta, = rasterization_packed_textured_gaussians(
                 means=model.means,
                 quats=model.quats,
@@ -671,6 +713,10 @@ class GaussianViewerApp:
         # Update frustums and attach click callbacks in the viewer
         self.viewer.custom_update(train_dataset=self.trainset, val_dataset=self.valset)
         self.viewer.update_frustum_callback()
+
+        texture_dims_cpu = self.textured_gaussian_models[0].texture_dims.detach().cpu().numpy()
+        print(f'texture_dims_cpu.max(): {texture_dims_cpu.max()}')
+        print(f'texture_dims_cpu.min(): {texture_dims_cpu.min()}')
 
         # texture_plot = plotl
         self.viewer.set_texture_plot(

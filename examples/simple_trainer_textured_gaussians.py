@@ -75,9 +75,9 @@ class Config:
     # Number of training steps
     max_steps: int = 30_000
     # Steps to evaluate the model
-    eval_steps: List[int] = field(default_factory=lambda: [7_000, 30_000])
+    eval_steps: List[int] = field(default_factory=lambda: [30_000])
     # Steps to save the model
-    save_steps: List[int] = field(default_factory=lambda: [7_000, 30_000])
+    save_steps: List[int] = field(default_factory=lambda: [30_000])
     # Steps to pause when training for debugging
     pause_steps: List[int] = field(default_factory=lambda: [])
 
@@ -205,6 +205,8 @@ class Config:
 
     min_tex_res: int = 1
     max_tex_res: int = 16
+    min_aspect_ratio: float = 6.0
+    max_scale_for_thin: float = 0.05
     upscale_grad2d: float = 0.0008
     upscale_start_iter: int = 0
     upscale_stop_iter: int = 1002
@@ -618,6 +620,7 @@ class Runner:
 
         # Model
         feature_dim = 32 if cfg.app_opt else None
+        self.init_type = cfg.init_type
         self.splats, self.optimizers, self.constants = create_splats_with_optimizers(
             self.parser,
             self.cfg,
@@ -663,6 +666,8 @@ class Runner:
         self.texture_strategy = TextureStrategy(
             min_tex_res=self.cfg.min_tex_res,
             max_tex_res=self.cfg.max_tex_res,
+            min_aspect_ratio=self.cfg.min_aspect_ratio,
+            max_scale_for_thin=self.cfg.max_scale_for_thin,
             upscale_grad2d=self.cfg.upscale_grad2d,
             upscale_start_iter=self.cfg.upscale_start_iter,
             upscale_stop_iter=self.cfg.upscale_stop_iter,
@@ -732,6 +737,31 @@ class Runner:
             RenderMode.TEX_SIZE: {},
             RenderMode.SH: {}
         }
+
+    def get_splat_mem_size_bytes(self) -> Dict:
+        print(self.splats.keys())
+        print(self.cfg.init_type)
+        mem_size_stats = {
+            "means": self.splats["means"].numel() * 4,
+            "scales": self.splats["scales"].numel() * 4,
+            "quats": self.splats["quats"].numel() * 4,
+            "opacities": self.splats["opacities"].numel() * 4,
+        }
+        if "sh0" in self.splats.keys():
+            mem_size_stats["sh0"] = self.splats["sh0"].numel() * 4
+            mem_size_stats["shN"] = self.splats["shN"].numel() * 4
+        else:
+            mem_size_stats["features"] = self.splats["features"].numel() * 4
+        if self.model_type == 'textured_gaussians':
+            texture_channels = 0
+            if self.cfg.textured_rgb:
+                texture_channels += 3
+            if self.cfg.textured_alpha:
+                texture_channels += 1
+            mem_size_stats["textures_packed"]= self.splats["textures_packed"].shape[1] * texture_channels * 4
+            mem_size_stats["texture_dims"] = self.constants["texture_dims"].numel() * 4
+        
+        return mem_size_stats
 
     def get_textures(self):
         # textures: [N, L, L, 4]
@@ -1575,10 +1605,13 @@ class Runner:
         psnr = torch.stack(metrics["psnr"]).mean()
         ssim = torch.stack(metrics["ssim"]).mean()
         lpips = torch.stack(metrics["lpips"]).mean()
+        mem_stats = self.get_splat_mem_size_bytes()
+        total_size = sum(mem_stats.values())
         print(
             f"PSNR: {psnr.item():.3f}, SSIM: {ssim.item():.4f}, LPIPS: {lpips.item():.3f} "
             f"Time: {ellipse_time:.3f}s/image "
-            f"Number of GS: {len(self.splats['means'])}"
+            f"Number of GS: {len(self.splats['means'])} "
+            f"Total mem in MB: {total_size / (1024 * 1024)}"
         )
         # save stats as json
         stats = {
@@ -1587,6 +1620,8 @@ class Runner:
             "lpips": lpips.item(),
             "ellipse_time": ellipse_time,
             "num_GS": len(self.splats["means"]),
+            **mem_stats,
+            "mem_mb": total_size / (1024 * 1024)
         }
         with open(f"{self.stats_dir}/val_step{step:04d}.json", "w") as f:
             json.dump(stats, f)
