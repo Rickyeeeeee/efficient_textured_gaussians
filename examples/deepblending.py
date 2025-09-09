@@ -1,19 +1,19 @@
 import os
 import itertools
 
-dataset_dir = "/workspace/data/Datasets/tandt_db/tandt"
-output_dir = "/workspace/work/Experiments/tnt"
-point_counts = [10000, 100000]
+dataset_dir = "/workspace/data/Datasets/tandt_db/db"
+output_dir = "/workspace/work/Experiments/db"
+point_counts = [10000, 100000, 1000000]
 tex_res_start = 1
 tex_res_end = 4
 data_factor = 1
 scenes = [
-    'train',
-    'truck'
+    'drjohnson',
+    'playroom'
 ]
 has_rgb = True
 has_alpha = True
-render = True
+render = False
 is_eval = False
 
 for scene, point_count in itertools.product(scenes, point_counts):
