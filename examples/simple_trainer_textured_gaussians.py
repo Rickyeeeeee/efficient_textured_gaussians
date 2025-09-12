@@ -743,7 +743,7 @@ class Runner:
         print(self.cfg.init_type)
         mem_size_stats = {
             "means": self.splats["means"].numel() * 4,
-            "scales": self.splats["scales"].numel() * 4,
+            "scales": self.splats["scales"][:,:2].numel() * 4,
             "quats": self.splats["quats"].numel() * 4,
             "opacities": self.splats["opacities"].numel() * 4,
         }

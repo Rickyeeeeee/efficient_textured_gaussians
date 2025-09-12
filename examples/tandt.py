@@ -1,21 +1,16 @@
 import os
-import itertools
 import math
 
-dataset_dir = "/workspace/data/Datasets/MipNerf360"
-output_dir = "/workspace/work/Experiments/MipNerf360"
-point_counts = [500000]
+dataset_dir = "/workspace/data/Datasets/tandt_db/tandt"
+output_dir = "/workspace/work/Outputs/tandt"
+point_count = 500000
+texture_resolution = 4
 tex_res_start = 1
 tex_res_end = 4
-data_factor = 4
+data_factor = 1
 scenes = [
-    'bicycle',
-    'bonsai',
-    'counter',
-    'garden',
-    'kitchen',
-    'room',
-    'stump'
+    'train',
+    'truck'
 ]
 
 min_aspect_ratio = 4.0
@@ -26,7 +21,8 @@ has_alpha = True
 render = False
 is_eval = False
 
-for scene, point_count in itertools.product(scenes, point_counts):
+for scene in scenes:
+
     method_name = "2dgs_mcmc"
     cmd_2dgs = (
         f"CUDA_VISIBLE_DEVICES=0 python simple_trainer_textured_gaussians.py mcmc "
@@ -53,7 +49,6 @@ for scene, point_count in itertools.product(scenes, point_counts):
         print(f"[INFO] Running command for scene {scene}: {cmd_2dgs}")
         os.system(cmd_2dgs)
 
-    # method_name = f'ntex_anisotropic_{'rgb' if has_rgb else ''}{'a' if has_alpha else ''}'
     method_name = f'ntex_full'
     cmd_ntex = (
         f"CUDA_VISIBLE_DEVICES=0 python simple_trainer_textured_gaussians.py mcmc "
@@ -80,9 +75,9 @@ for scene, point_count in itertools.product(scenes, point_counts):
         f"--upscale_stop_iter={500*int(math.log2(tex_res_end))+2} "
         f"--upscale_every=500 "
     )
-    # if not os.path.isdir(f"{output_dir}/{method_name}/pc{point_count}/{scene}/videos") or render:
-    print(f"[INFO] Running command for scene {scene}: {cmd_ntex}")
-    os.system(cmd_ntex)
+    if not os.path.isdir(f"{output_dir}/{method_name}/pc{point_count}/{scene}/videos") or render:
+        print(f"[INFO] Running command for scene {scene}: {cmd_ntex}")
+        os.system(cmd_ntex)
 
     method_name = f'textured_gaussians_{'rgb' if has_rgb else ''}{'a' if has_alpha else ''}'
     cmd_textured_gaussians = (

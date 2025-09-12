@@ -10,12 +10,12 @@ tex_res_start = 1
 tex_res_end = 4
 data_factor = 4
 scenes = [
-    # 'room',
-    # 'bicycle',
-    # 'bonsai',
-    # 'counter',
-    # 'garden',
-    # 'kitchen',
+    'room',
+    'bicycle',
+    'bonsai',
+    'counter',
+    'garden',
+    'kitchen',
     'stump'
 ]
 has_rgb = True
