@@ -3,7 +3,7 @@ import itertools
 import math
 
 dataset_dir = "/workspace/data/Datasets/MipNerf360"
-output_dir = "/workspace/work/Experiments/MipNerf360"
+output_dir = "/workspace/work/FixedPC/MipNerf360"
 point_counts = [500000]
 tex_res_start = 1
 tex_res_end = 4

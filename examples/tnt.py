@@ -1,7 +1,7 @@
 import os
 
 dataset_dir = "/workspace/data/Datasets/tnt_dataset/tnt"
-output_dir = "/workspace/work/Outputs/tnt"
+output_dir = "/workspace/work/FixedPC/tnt"
 point_count = 200000
 texture_resolution = 4
 scenes = [

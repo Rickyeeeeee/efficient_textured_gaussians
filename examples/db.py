@@ -2,14 +2,14 @@ import os
 import math
 
 dataset_dir = "/workspace/data/Datasets/tandt_db/db"
-output_dir = "/workspace/work/Outputs/db"
+output_dir = "/workspace/work/FixedPC/db"
 point_count = 1000000
 texture_resolution = 4
 tex_res_start = 1
 tex_res_end = 4
 data_factor = 1
 scenes = [
-    'dfjohonson',
+    'drjohnson',
     'playroom'
 ]
 
@@ -28,8 +28,8 @@ for scene in scenes:
         f"CUDA_VISIBLE_DEVICES=0 python simple_trainer_textured_gaussians.py mcmc "
         f"{f"--ckpt {output_dir}/{method_name}/pc{point_count}/{scene}/ckpts/ckpt_29999.pt " if render else ""}"
         f"--max_steps 30000 "
-        f"--eval_steps 7000 30000 "
-        f"--save_steps 7000 30000 "
+        f"--eval_steps 30000 "
+        f"--save_steps 30000 "
         f"--data_dir {dataset_dir}/{scene} "
         f"--result_dir {output_dir}/2dgs_mcmc/pc{point_count}/{scene} "
         f"--dataset colmap "
@@ -70,7 +70,7 @@ for scene in scenes:
         f"--data_factor {data_factor} "
         f"--min_aspect_ratio={min_aspect_ratio} "
         f"--max_scale_for_thin={max_scale_for_thin} "
-        f"--upscale_grad2d=0.00002 "
+        f"--upscale_grad2d=0.000001 "
         f"--upscale_start_iter=0 "
         f"--upscale_stop_iter={500*int(math.log2(tex_res_end))+2} "
         f"--upscale_every=500 "
