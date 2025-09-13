@@ -82,6 +82,13 @@ class TextureStrategy(Strategy):
             print(f'grads.mean(): {grads.mean()}')
             print(f'Upscale points: {is_grad_high.sum()}')
 
+            size = constants['texture_dims'].shape[0]
+            k = int(size / 2)
+            is_grad_high = torch.zeros_like(is_grad_high)
+            idx = torch.randperm(k)
+            is_grad_high[idx] = True
+            print(f'Upscale points: {is_grad_high.sum()}')
+
             texture_dims_dst = constants['texture_dims'].clone()
             texture_dims_dst[is_grad_high] *= 2
 

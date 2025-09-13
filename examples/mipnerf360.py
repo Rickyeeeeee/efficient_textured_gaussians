@@ -2,9 +2,9 @@ import os
 import itertools
 
 dataset_dir = "/workspace/data/Datasets/MipNerf360"
-output_dir = "/workspace/work/Outputs/MipNerf360"
+output_dir = "/workspace/work/Experiments/MipNerf360"
 # point_counts = [10000, 50000, 100000]
-point_counts = [1000000]
+point_counts = [10000]
 tex_res_start = 1
 tex_res_end = 4
 data_factor = 4
@@ -49,7 +49,7 @@ for scene, point_count in itertools.product(scenes, point_counts):
         print(f"[INFO] Running command for scene {scene}: {cmd_2dgs}")
         os.system(cmd_2dgs)
 
-    method_name = f'ntex_{'rgb' if has_rgb else ''}{'a' if has_alpha else ''}'
+    method_name = f'ntex_random'
     cmd_ntex = (
         f"CUDA_VISIBLE_DEVICES=0 python simple_trainer_textured_gaussians.py mcmc "
         f"{f"--ckpt {output_dir}/{method_name}/pc{point_count}/{scene}/ckpts/ckpt_29999.pt " if render else ""}"
@@ -100,5 +100,5 @@ for scene, point_count in itertools.product(scenes, point_counts):
         f"--upscale_stop_iter=1002 "
         f"--upscale_every=500 "
     )
-    print(f"[INFO] Running command for scene {scene}: {cmd_textured_gaussians}")
-    os.system(cmd_textured_gaussians)
+    # print(f"[INFO] Running command for scene {scene}: {cmd_textured_gaussians}")
+    # os.system(cmd_textured_gaussians)
