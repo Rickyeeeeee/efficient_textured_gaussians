@@ -3,10 +3,9 @@ import itertools
 import math
 
 # Settings
-dataset_dir = "/workspace/data/tandt_db/tandt"
-output_dir = "/workspace/work/V100_Evaluations/tandt"
+dataset_dir = "/workspace/data/Datasets/tandt_db/tandt"
+output_dir = "/workspace/work/Full_Evaluations/tandt"
 point_counts = [10000, 50000, 100000, 500000]
-texture_resolution = 4
 tex_res_start = 1
 tex_res_end = 4
 data_factor = 1
@@ -34,8 +33,8 @@ for scene, point_count in itertools.product(scenes, point_counts):
         f"CUDA_VISIBLE_DEVICES={CUDA_DEVICE_ID} python simple_trainer_textured_gaussians.py mcmc "
         f"{f"--ckpt {output_dir}/{method_name}/pc{point_count}/{scene}/ckpts/ckpt_29999.pt " if render else ""}"
         f"--max_steps 30000 "
-        f"--eval_steps 7000 30000 "
-        f"--save_steps 7000 30000 "
+        f"--eval_steps 30000 "
+        f"--save_steps 30000 "
         f"--data_dir {dataset_dir}/{scene} "
         f"--result_dir {output_dir}/2dgs_mcmc/pc{point_count}/{scene} "
         f"--dataset colmap "
@@ -81,8 +80,9 @@ for scene, point_count in itertools.product(scenes, point_counts):
         f"--upscale_stop_iter={500*int(math.log2(tex_res_end))+2} "
         f"--upscale_every=500 "
     )
-    print(f"[INFO] Running command for scene {scene}: {cmd_ntex}")
-    os.system(cmd_ntex)
+    if not os.path.isdir(f"{output_dir}/{method_name}/pc{point_count}/{scene}/videos") or render:
+        print(f"[INFO] Running command for scene {scene}: {cmd_ntex}")
+        os.system(cmd_ntex)
 
     method_name = f'textured_gaussians_{'rgb' if has_rgb else ''}{'a' if has_alpha else ''}'
     cmd_textured_gaussians = (

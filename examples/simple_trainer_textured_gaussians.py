@@ -296,10 +296,10 @@ def create_splats_with_optimizers(
         ("quats", torch.nn.Parameter(quats), 1e-3),
         ("opacities", torch.nn.Parameter(opacities), 5e-2),
     ]
-    print(f"points: {points.min()}, {points.max()}")
-    print(f"scales: {scales.min()}, {scales.max()}")
-    print(f"quats: {quats.min()}, {quats.max()}")
-    print(f"opacities: {opacities.min()}, {opacities.max()}")
+    # print(f"points: {points.min()}, {points.max()}")
+    # print(f"scales: {scales.min()}, {scales.max()}")
+    # print(f"quats: {quats.min()}, {quats.max()}")
+    # print(f"opacities: {opacities.min()}, {opacities.max()}")
 
     constants = {}
 
@@ -1758,7 +1758,7 @@ if __name__ == "__main__":
         "mcmc": (
             "Gaussian splatting training using densification from the paper '3D Gaussian Splatting as Markov Chain Monte Carlo'.",
             Config(
-                strategy=MCMCStrategy(verbose=True),
+                strategy=MCMCStrategy(verbose=False),
             ),
         ),
     }
