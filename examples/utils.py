@@ -168,6 +168,7 @@ def colormap(img, cmap="jet"):
     fig.canvas.draw()
     data = np.frombuffer(fig.canvas.tostring_argb(), dtype=np.uint8)
     data = data.reshape(fig.canvas.get_width_height()[::-1] + (4,))
+    data = data.copy()  # <-- make a writable copy
     img = torch.from_numpy(data).float().permute(2, 0, 1)
     plt.close()
     return img

@@ -83,7 +83,7 @@ class TextureStrategy(Strategy):
             print(f'min_aspect_ratio: {self.min_aspect_ratio}')
             print(f'max_scale_for_thin: {self.max_scale_for_thin}')
             count = state["count"]
-            grads = state["grad2d"] / count.clamp_min(1)
+            grads: torch.Tensor = state["grad2d"] / count.clamp_min(1)
             device = grads.device
 
             is_grad_high = grads > self.upscale_grad2d
@@ -98,9 +98,16 @@ class TextureStrategy(Strategy):
             scales = torch.exp(params['scales'])
             is_thin_x = ((scales[:,0] / scales[:,1]) > self.min_aspect_ratio) & (scales[:,1] < self.max_scale_for_thin)
             is_thin_y = ((scales[:,1] / scales[:,0]) > self.min_aspect_ratio) & (scales[:,0] < self.max_scale_for_thin)
-            texture_dims_dst[is_thin_x & is_grad_high][:,0] *= 2
-            texture_dims_dst[is_thin_y & is_grad_high][:,1] *= 2
+            texture_dims_dst[is_thin_x & is_grad_high,0] *= 2
+            print(f'shape: {texture_dims_dst[is_thin_x & is_grad_high].shape}')
+            print(f'anisotropic count x: {(texture_dims_dst[:,0] > 1).sum()}')
+            print(f'anisotropic count y: {(texture_dims_dst[:,1] > 1).sum()}')
+            texture_dims_dst[is_thin_y & is_grad_high,1] *= 2
+            print(f'anisotropic count x: {(texture_dims_dst[:,0] > 1).sum()}')
+            print(f'anisotropic count y: {(texture_dims_dst[:,1] > 1).sum()}')
             texture_dims_dst[is_grad_high & ~(is_thin_y | is_thin_x)] *= 2
+            print(f'anisotropic count x: {(texture_dims_dst[:,0] > 1).sum()}')
+            print(f'anisotropic count y: {(texture_dims_dst[:,1] > 1).sum()}')
 
             print(f'is_thin_x: {is_thin_x.sum()}')
             print(f'is_thin_y: {is_thin_y.sum()}')
