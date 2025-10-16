@@ -556,7 +556,7 @@ class TrainViewer(UtilViewer):
 
         fig.update_layout(
             scene=dict(
-                xaxis_title="X",
+                xaxis_title="Texture Width",
                 yaxis_title="Y",
                 zaxis_title="Count",
                 aspectmode="data"
@@ -892,7 +892,7 @@ class Runner:
                 **kwargs,
             )
         elif self.model_type == "textured_gaussians":
-            textures = self.get_textures()
+            # textures = self.get_textures()
             textures_packed = self.get_textures_packed()
             (
                 render_colors,
@@ -913,7 +913,6 @@ class Runner:
                 scales=scales,
                 opacities=opacities,
                 colors=colors,
-                textures=textures,
                 textures_packed=textures_packed,  # [3, \sum(N_i * H_i * W_i)]
                 texture_dims=self.constants["texture_dims"],  # [N, 2]
                 texture_offsets= self.constants["texture_offsets"],  # [N, 1]
@@ -1025,7 +1024,6 @@ class Runner:
                 **kwargs,
             )
         elif self.model_type == "textured_gaussians":
-            textures = self.get_textures()
             textures_packed = self.get_textures_packed()
             (
                 render_colors,
@@ -1046,7 +1044,6 @@ class Runner:
                 scales=scales,
                 opacities=opacities,
                 colors=colors,
-                textures=textures,
                 textures_packed=textures_packed,  # [3, \sum(N_i * H_i * W_i)]
                 texture_dims=self.constants["texture_dims"],  # [N, 2]
                 texture_offsets= self.constants["texture_offsets"],  # [N, 1]
@@ -1536,54 +1533,54 @@ class Runner:
             )
 
             # write median depths
-            render_median = (render_median - render_median.min()) / (
-                render_median.max() - render_median.min()
-            )
-            # render_median = render_median.detach().cpu().squeeze(0).unsqueeze(-1).repeat(1, 1, 3).numpy()
-            render_median = (
-                render_median.detach().cpu().squeeze(0).repeat(1, 1, 3).numpy()
-            )
+            # render_median = (render_median - render_median.min()) / (
+            #     render_median.max() - render_median.min()
+            # )
+            # # render_median = render_median.detach().cpu().squeeze(0).unsqueeze(-1).repeat(1, 1, 3).numpy()
+            # render_median = (
+            #     render_median.detach().cpu().squeeze(0).repeat(1, 1, 3).numpy()
+            # )
 
-            imageio.imwrite(
-                f"{self.render_dir}/val_{i:04d}_median_depth_{step}.png",
-                (render_median * 255).astype(np.uint8),
-            )
+            # imageio.imwrite(
+            #     f"{self.render_dir}/val_{i:04d}_median_depth_{step}.png",
+            #     (render_median * 255).astype(np.uint8),
+            # )
 
-            # write normals
-            normals = (normals * 0.5 + 0.5).squeeze(0).cpu().numpy()
-            normals_output = (normals * 255).astype(np.uint8)
-            imageio.imwrite(
-                f"{self.render_dir}/val_{i:04d}_normal_{step}.png", normals_output
-            )
+            # # write normals
+            # normals = (normals * 0.5 + 0.5).squeeze(0).cpu().numpy()
+            # normals_output = (normals * 255).astype(np.uint8)
+            # imageio.imwrite(
+            #     f"{self.render_dir}/val_{i:04d}_normal_{step}.png", normals_output
+            # )
 
-            # write normals from depth
-            normals_from_depth *= alphas.squeeze(0).detach()
-            normals_from_depth = (normals_from_depth * 0.5 + 0.5).cpu().numpy()
-            normals_from_depth = (normals_from_depth - np.min(normals_from_depth)) / (
-                np.max(normals_from_depth) - np.min(normals_from_depth)
-            )
-            normals_from_depth_output = (normals_from_depth * 255).astype(np.uint8)
-            if len(normals_from_depth_output.shape) == 4:
-                normals_from_depth_output = normals_from_depth_output.squeeze(0)
-            imageio.imwrite(
-                f"{self.render_dir}/val_{i:04d}_normals_from_depth_{step}.png",
-                normals_from_depth_output,
-            )
+            # # write normals from depth
+            # normals_from_depth *= alphas.squeeze(0).detach()
+            # normals_from_depth = (normals_from_depth * 0.5 + 0.5).cpu().numpy()
+            # normals_from_depth = (normals_from_depth - np.min(normals_from_depth)) / (
+            #     np.max(normals_from_depth) - np.min(normals_from_depth)
+            # )
+            # normals_from_depth_output = (normals_from_depth * 255).astype(np.uint8)
+            # if len(normals_from_depth_output.shape) == 4:
+            #     normals_from_depth_output = normals_from_depth_output.squeeze(0)
+            # imageio.imwrite(
+            #     f"{self.render_dir}/val_{i:04d}_normals_from_depth_{step}.png",
+            #     normals_from_depth_output,
+            # )
 
-            # write distortions
-            render_dist = render_distort
-            dist_max = torch.max(render_dist)
-            dist_min = torch.min(render_dist)
-            render_dist = (render_dist - dist_min) / (dist_max - dist_min)
-            render_dist = (
-                colormap(render_dist.cpu().numpy()[0])
-                .permute((1, 2, 0))
-                .numpy()
-                .astype(np.uint8)
-            )
-            imageio.imwrite(
-                f"{self.render_dir}/val_{i:04d}_distortions_{step}.png", render_dist
-            )
+            # # write distortions
+            # render_dist = render_distort
+            # dist_max = torch.max(render_dist)
+            # dist_min = torch.min(render_dist)
+            # render_dist = (render_dist - dist_min) / (dist_max - dist_min)
+            # render_dist = (
+            #     colormap(render_dist.cpu().numpy()[0])
+            #     .permute((1, 2, 0))
+            #     .numpy()
+            #     .astype(np.uint8)
+            # )
+            # imageio.imwrite(
+            #     f"{self.render_dir}/val_{i:04d}_distortions_{step}.png", render_dist
+            # )
 
             pixels = pixels.permute(0, 3, 1, 2)  # [1, 3, H, W]
             colors = colors.permute(0, 3, 1, 2)  # [1, 3, H, W]

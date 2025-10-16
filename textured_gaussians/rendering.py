@@ -1671,7 +1671,6 @@ def rasterization_packed_textured_gaussians(
     scales: Tensor,
     opacities: Tensor,
     colors: Tensor,
-    textures: Tensor,
     textures_packed: Tensor,
     texture_dims: Tensor,
     texture_offsets: Tensor,

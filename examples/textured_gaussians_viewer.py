@@ -7,6 +7,14 @@ from typing import List, Tuple, Dict
 from dataclasses import dataclass
 from enum import Enum
 
+import numpy as np
+import pandas as pd
+import matplotlib.pyplot as plt
+from matplotlib.ticker import PercentFormatter
+import matplotlib as mpl
+import shutil
+import seaborn as sns
+
 import imageio
 import plotly.express as px
 import plotly.graph_objects as go
@@ -27,6 +35,196 @@ from textured_gaussians.rendering import rasterization, rasterization_2dgs, rast
 from util_viewer import UtilViewer
 
 import nerfview
+
+def plot_texture_shape_barchart_pct(
+        data: np.ndarray,
+        save_path: str,                   # ".png" / ".svg" / ".pdf"
+        sort_mode: str = "area_then_ratio",
+        # size control
+        width_px: int | None = None,
+        height_px: int | None = None,
+        dpi: int = 200,
+        figsize=(11, 5),                  # inches if width_px/height_px not given
+        # LaTeX styling
+        use_latex: str | bool = "auto",   # "auto" | True | False
+        latex_preamble: str | None = None,
+        show_legend: bool = True,
+        decimals: int = 1
+    ):
+    """
+    Save a LaTeX-styled 2D bar chart (matplotlib + seaborn) of PERCENTAGES of texture shapes (W×H),
+    merging (w,h) and (h,w). Squares are blue; non-squares are red. The 1×1 bar is hatched.
+
+    Assumes these are already imported:
+      numpy as np, pandas as pd, matplotlib as mpl, matplotlib.pyplot as plt, seaborn as sns
+      from matplotlib.ticker import PercentFormatter, and shutil
+    """
+    # near the top of the function, after rc_context:
+    mpl.rcParams.update({"font.size": 142, "axes.titlesize": 14, "axes.labelsize": 14})
+
+    # ----- input checks -----
+    if data.ndim != 2 or data.shape[1] != 2:
+        raise ValueError("data must have shape (n, 2)")
+    if not save_path:
+        raise ValueError("save_path must be provided")
+
+    # ----- figure size (inches) -----
+    if (width_px is not None) and (height_px is not None):
+        figsize_in = (width_px / dpi, height_px / dpi)
+    elif (width_px is not None) != (height_px is not None):
+        raise ValueError("Provide both width_px and height_px, or neither.")
+    else:
+        figsize_in = figsize
+
+    # ----- canonicalize (w,h) == (h,w), count, % -----
+    W = np.rint(data[:, 0]).astype(int)
+    H = np.rint(data[:, 1]).astype(int)
+    A = np.minimum(W, H); B = np.maximum(W, H)
+    uniq, counts = np.unique(np.stack([A, B], 1), axis=0, return_counts=True)
+    total = counts.sum()
+    if total == 0:
+        raise ValueError("No data to plot (total count is zero).")
+
+    # sort
+    if sort_mode == "area_then_ratio":
+        areas  = (uniq[:, 0] * uniq[:, 1]).astype(int)
+        ratios = uniq[:, 1] / np.maximum(1, uniq[:, 0])
+        order = np.lexsort((ratios, areas))
+    else:
+        order = np.lexsort((uniq[:, 1], uniq[:, 0]))
+    uniq, counts = uniq[order], counts[order]
+
+    pct = counts / total * 100.0
+    is_square = (uniq[:, 0] == uniq[:, 1])
+
+    # math labels; try bold math via \boldsymbol (no \mathbf)
+    labels_math = [rf"$\boldsymbol{{{w}\times{h}}}$" for w, h in uniq]
+
+    df = pd.DataFrame({
+        "shape": labels_math,
+        "percentage": pct,
+        "kind": np.where(is_square, "square", "non-square")
+    })
+
+    # ----- LaTeX / MathText style (bold, serif text) -----
+    if use_latex == "auto":
+        has_latex = shutil.which("latex") is not None
+        use_tex = has_latex
+    else:
+        use_tex = bool(use_latex)
+
+    if latex_preamble is None:
+        latex_preamble = r"\usepackage{amsmath}\usepackage{bm}"
+
+    rc_tex = {
+        # Non-equation text: bold serif
+        "font.family": "serif",
+        "font.serif": ["Computer Modern Roman", "CMU Serif", "DejaVu Serif"],
+        "font.weight": "bold",
+        "axes.titleweight": "bold",
+        "axes.labelweight": "bold",
+        "axes.unicode_minus": False,
+    }
+    if use_tex:
+        rc_tex.update({
+            "text.usetex": True,
+            "text.latex.preamble": latex_preamble,
+        })
+    else:
+        rc_tex.update({
+            "text.usetex": False,
+            "mathtext.fontset": "cm",   # Computer Modern math
+            "mathtext.rm": "serif",
+        })
+
+    with mpl.rc_context(rc_tex):
+        # Use a clean background (no whitegrid); we'll also hard-disable grid lines.
+        sns.set_theme(style="white", rc={
+            "font.family": "serif",
+            "font.weight": "bold",
+            "axes.titleweight": "bold",
+            "axes.labelweight": "bold",
+        })
+
+        fig, ax = plt.subplots(figsize=figsize_in, dpi=dpi)
+
+        palette = {"square": "blue", "non-square": "red"}
+        sns.barplot(
+            data=df,
+            x="shape", y="percentage", hue="kind",
+            dodge=False, palette=palette, ax=ax
+        )
+
+        # --- Remove background grid/level lines (y-percentage guide lines) ---
+        ax.grid(False)                        # fully disable grid
+        ax.yaxis.grid(False)                  # just to be explicit
+        ax.set_axisbelow(False)               # make sure nothing sneaks behind
+
+        # percent axis and limits
+        ax.yaxis.set_major_formatter(PercentFormatter(xmax=100, decimals=decimals))
+        ymax = float(df["percentage"].max())
+        ax.set_ylim(0, min(100.0, ymax * 1.15 if ymax > 0 else 5.0))
+
+        # Titles/labels (bold by rcParams)
+        fig.subplots_adjust(top=0.98)
+        ax.set_xlabel(r"Texture Shape ($W\times H$)")
+        ax.set_ylabel(r"Percentage")
+
+        # xtick labels are math strings; rotate and make sure they appear bold
+        ax.set_xticklabels(labels_math, rotation=30, ha="right")
+        for lbl in ax.get_xticklabels():
+            lbl.set_fontweight("bold")
+
+        # ytick labels bold too
+        for lbl in ax.get_yticklabels():
+            lbl.set_fontweight("bold")
+
+        # Legend
+        if show_legend:
+            leg = ax.legend(title="", frameon=False)
+            for txt in leg.get_texts():
+                txt.set_fontweight("bold")
+        else:
+            ax.get_legend().remove()
+
+        # annotate bars with bold percentages (no \mathbf)
+        for p in ax.patches:
+            y = p.get_height()
+            if y > 0:
+                ax.annotate(
+                    rf"{y:.{decimals}f}%",
+                    (p.get_x() + p.get_width() / 2, y),
+                    xytext=(0, 3),
+                    textcoords="offset points",
+                    ha="center", va="bottom", fontsize=10, fontweight="bold"
+                )
+
+    # --- Special styling for the 1×1 bar: hatch slashes with white face (looks unfilled) ---
+    one_by_one_label = rf"$\boldsymbol{{1\times1}}$"
+    xticks = ax.get_xticks()
+    xlabels_now = [t.get_text() for t in ax.get_xticklabels()]
+    if one_by_one_label in xlabels_now:
+        idx = xlabels_now.index(one_by_one_label)
+        target_x = xticks[idx]
+        target_patch = None
+        for p in ax.patches:
+            xc = p.get_x() + p.get_width() / 2.0
+            if abs(xc - target_x) < 1e-7:
+                target_patch = p
+                break
+        if target_patch is not None:
+            # white face = visually "no fill" on white background; hatch uses edgecolor
+            target_patch.set_facecolor("white")
+            target_patch.set_alpha(1.0)
+            target_patch.set_edgecolor("blue")      # or palette["square"]
+            target_patch.set_hatch("///")
+            target_patch.set_linewidth(1.5)
+
+
+        fig.tight_layout()
+        fig.savefig(save_path, dpi=dpi, bbox_inches="tight", pad_inches=0.02)
+        plt.close(fig)
+
 
 @dataclass
 class TexturedGaussiansModel:
@@ -88,6 +286,8 @@ class CustomViewer(UtilViewer):
         self.scale_x: bool = True
         self.scale_value = 10.0
         self.min_scale_value = 10.0
+        self.texture_index_slider: viser.gui.SliderHandle | None = None
+        self._texture_index_callback: callable | None = None
 
         super().__init__(*args, **kwargs)
 
@@ -147,6 +347,11 @@ class CustomViewer(UtilViewer):
                 aspect=1.0,
                 visible=True
             )
+            self.texture_show_handle = self.server.gui.add_plotly(
+                figure=go.Figure(),
+                aspect=1.0,
+                visible=True
+            )
 
         with self._visualization_folder:
             render_mode_dropdown = self.server.gui.add_dropdown(
@@ -165,7 +370,7 @@ class CustomViewer(UtilViewer):
             tex_slider = self.server.gui.add_slider(
                 label='texture size',
                 min=0,
-                max=16,
+                max=6,
                 step=1,
                 initial_value=0,
                 visible=False
@@ -211,6 +416,45 @@ class CustomViewer(UtilViewer):
                 scale_slider.visible = self.render_mode is RenderMode.SCALE
                 min_scale_slider.visible = self.render_mode is RenderMode.SCALE
                 self.rerender(_)
+
+            texture_index_slider = self.server.gui.add_slider(
+                label='texture gaussian index',
+                min=0,
+                max=1,
+                step=1,
+                initial_value=0,
+                visible=False
+            )
+            self.texture_index_slider = texture_index_slider
+
+            @texture_index_slider.on_update
+            def _(_):
+                if self._texture_index_callback is not None:
+                    self._texture_index_callback(int(texture_index_slider.value))
+
+    def configure_texture_index_control(self, max_index: int, callback):
+        """Configure visibility and behaviour of the gaussian texture index slider."""
+        if self.texture_index_slider is None:
+            raise RuntimeError("Texture index slider has not been initialized.")
+
+        if max_index is None or max_index < 0:
+            self.texture_index_slider.visible = False
+            self._texture_index_callback = None
+            return
+
+        self._texture_index_callback = callback
+        self.texture_index_slider.min = 0
+        self.texture_index_slider.max = max_index
+        self.texture_index_slider.step = 1
+
+        current_value = int(self.texture_index_slider.value)
+        if current_value < 0 or current_value > max_index:
+            current_value = 0
+            self.texture_index_slider.value = current_value
+
+        self.texture_index_slider.visible = True
+        if callback is not None:
+            callback(int(self.texture_index_slider.value))
 
 
     def set_rendering_functions(self, render_train_fn: callable, render_val_fn: callable,
@@ -282,6 +526,49 @@ class CustomViewer(UtilViewer):
             title_x=0.5 # Center the main title
         )
         plot_handle.figure = fig
+
+    def _update_texture_show(self, gaussian_idx: int):
+        """Load a single gaussian texture and update the Plotly preview."""
+        if not self.textured_gaussian_models:
+            return
+
+        model_idx = max(0, min(self.viewer.debug_model_idx, len(self.textured_gaussian_models) - 1))
+        model = self.textured_gaussian_models[model_idx]
+        num_textures = int(model.texture_dims.shape[0])
+        idx = int(gaussian_idx)
+        if idx < 0 or idx >= num_textures:
+            return
+
+        dims_tensor = model.texture_dims[idx]
+        width, height = [int(v) for v in dims_tensor.tolist()]
+        if width <= 0 or height <= 0:
+            return
+
+        offset_tensor = model.texture_offsets[idx]
+        offset = int(offset_tensor.view(-1)[0].item())
+        texel_count = width * height
+        total_texel_count = int(model.textures_packed.shape[1])
+        if offset + texel_count > total_texel_count:
+            print(f"[Texture Viewer] Texture index {idx} exceeds packed range.", flush=True)
+            return
+
+        channels = model.textures_packed[:, offset: offset + texel_count]
+        channel_count = channels.shape[0]
+        if channel_count < 4:
+            pad = torch.ones(4 - channel_count, texel_count, device=channels.device, dtype=channels.dtype)
+            channels = torch.cat([channels, pad], dim=0)
+        elif channel_count > 4:
+            channels = channels[:4]
+
+        texture_flat = channels.detach().cpu().numpy()
+        dims_array = np.array([width, height], dtype=np.int32)
+        if (
+            self.viewer.texture_index_slider is not None
+            and hasattr(self.viewer.texture_index_slider, "hint")
+        ):
+            self.viewer.texture_index_slider.hint = f"{width}x{height}"
+        self.viewer.load_texture_show(data=texture_flat, dim=dims_array)
+
 
     def update_frustum_callback(self):
         """Attaches click callbacks to train and validation frustums to update image plots."""
@@ -394,8 +681,8 @@ class CustomViewer(UtilViewer):
 
         fig.update_layout(
             scene=dict(
-                xaxis_title="X",
-                yaxis_title="Y",
+                xaxis_title="Texture width",
+                yaxis_title="Texture height",
                 zaxis_title="Count",
                 aspectmode="cube"
             ),
@@ -403,6 +690,71 @@ class CustomViewer(UtilViewer):
         )
 
         self.texture_plot_handle.figure = fig
+
+    def load_texture_show(
+            self,
+            data: np.ndarray,
+            dim: np.array
+        ):
+        """
+        Display a single flattened RGBA texture as a 2D image inside the GUI.
+
+        Parameters
+        ----------
+        data:
+            Flattened texture array with shape (4, width*height) or (width*height, 4).
+        dim:
+            Iterable containing (width, height).
+        """
+        if data is None or dim is None:
+            raise ValueError("Both data and dim must be provided.")
+
+        texture_flat = np.asarray(data)
+        dims = np.asarray(dim).reshape(-1)
+        if dims.size != 2:
+            raise ValueError(f"'dim' must contain exactly two elements (width, height), got {dims}.")
+
+        width, height = map(int, dims.tolist())
+        if width <= 0 or height <= 0:
+            raise ValueError(f"Texture dimensions must be positive, got ({width}, {height}).")
+
+        if texture_flat.ndim != 2:
+            raise ValueError(f"Texture array must be 2D with 4 channels, got shape {texture_flat.shape}.")
+
+        if texture_flat.shape[0] == 4:
+            flat_rgba = texture_flat
+        elif texture_flat.shape[1] == 4:
+            flat_rgba = texture_flat.T
+        else:
+            raise ValueError(f"Texture array must have 4 channels; received shape {texture_flat.shape}.")
+
+        expected_size = width * height
+        if flat_rgba.shape[1] != expected_size:
+            raise ValueError(
+                f"Texture data length ({flat_rgba.shape[1]}) does not match width*height ({expected_size})."
+            )
+
+        # Reshape into image tensor (H, W, 4) and convert to uint8 for Plotly.
+        texture_rgba = flat_rgba.reshape(4, height, width).transpose(1, 2, 0)
+        texture_rgba = np.flip(texture_rgba, axis=0)  # match previous top-left origin view
+        texture_rgba = np.clip(texture_rgba, 0.0, 1.0)
+        texture_rgba_uint8 = (texture_rgba * 255).astype(np.uint8)
+
+        fig = go.Figure(
+            data=go.Image(
+                z=texture_rgba_uint8,
+                colormodel="rgba"
+            )
+        )
+        fig.update_layout(
+            title="Texture Preview",
+            xaxis=dict(title="Width (pixels)", constrain="domain"),
+            yaxis=dict(title="Height (pixels)"),
+            margin=dict(l=10, r=10, t=40, b=10)
+        )
+
+        self.texture_show_handle.figure = fig
+
 
 class GaussianViewerApp:
     """
@@ -545,8 +897,35 @@ class GaussianViewerApp:
             textures_packed = model.textures_packed.clone()
             match self.viewer.render_mode:
                 case RenderMode.TEX_SIZE:
-                    mask = model.texture_dims[...,0] >= self.viewer.tex_value
-                    colors[mask,0,:] = rgb_to_sh(torch.Tensor([1.0, 0.0, 0.0]).cuda())
+                    # Pull dims
+                    tex_dims = model.texture_dims    # shape [..., 2]
+                    u = tex_dims[..., 0]
+                    v = tex_dims[..., 1]
+
+                    # Select all tex with both dims < tex_value and not 1x1
+                    tv = 2**int(self.viewer.tex_value)
+                    if tv > 1:
+                        valid = (u <= tv) & (v <= tv) & ~((u == 1) & (v == 1))
+
+                        # Split into square vs non-square
+                        square_mask    = valid & (u == v)
+                        nonsquare_mask = valid & (u != v)
+
+                        # Colors on the same device/dtype as 'colors'
+                        blue = torch.tensor([0.0, 0.0, 1.0], device=colors.device, dtype=colors.dtype)
+                        red  = torch.tensor([1.0, 0.0, 0.0], device=colors.device, dtype=colors.dtype)
+
+                        # Convert to SH once (assumes rgb_to_sh returns a tensor of proper shape)
+                        blue_sh = rgb_to_sh(blue)
+                        red_sh  = rgb_to_sh(red)
+
+                        # Apply
+                        if square_mask.any():
+                            colors[square_mask, 0, :] = blue_sh
+                        if nonsquare_mask.any():
+                            colors[nonsquare_mask, 0, :] = red_sh
+                    # else: tv <= 1 → nothing to highlight
+
                 case RenderMode.NO_TEX:
                     textures_packed[:3, ...] = torch.zeros_like(textures_packed[:3, ...])
                     textures_packed[-1, ...] = torch.ones_like(textures_packed[-1, ...])
@@ -563,7 +942,6 @@ class GaussianViewerApp:
                 scales=model.scales,
                 opacities=model.opacities,
                 colors=colors,
-                textures=None, # Using packed textures
                 textures_packed=textures_packed,
                 texture_dims=model.texture_dims,
                 texture_offsets=model.texture_offsets,
@@ -691,6 +1069,11 @@ class GaussianViewerApp:
 
         self._load_datasets()
         self._load_models()
+        plot_texture_shape_barchart_pct(
+            data=self.textured_gaussian_models[0].texture_dims.detach().cpu().numpy(),
+            save_path="./chart.pdf",
+            figsize=(8.0, 4.0), dpi=300,   # or use width_px/height_px for PNG
+        )
 
         num_ckpts = len(self.textured_gaussian_models)
         # Initialize slider positions for blending multiple checkpoints
@@ -715,14 +1098,34 @@ class GaussianViewerApp:
         self.viewer.update_frustum_callback()
 
         texture_dims_cpu = self.textured_gaussian_models[0].texture_dims.detach().cpu().numpy()
+        print(f'texture_dims: {texture_dims_cpu[:20]}')
+        print(f'anisotropic texture: {(texture_dims_cpu[:,0] > texture_dims_cpu[:,1]).sum().item()}')
         print(f'texture_dims_cpu.max(): {texture_dims_cpu.max()}')
         print(f'texture_dims_cpu.min(): {texture_dims_cpu.min()}')
 
+        current_tg_model = self.textured_gaussian_models[0]
+
         # texture_plot = plotl
         self.viewer.set_texture_plot(
-            data=self.textured_gaussian_models[0].texture_dims.detach().cpu().numpy(),
+            data=current_tg_model.texture_dims.detach().cpu().numpy(),
             bins=(3,3)
         )
+
+        mask = current_tg_model.texture_dims[:,0] >= 4
+        indices = torch.nonzero(mask)
+        tindx = indices[3]
+        print(f'tindx: {tindx}')
+        tdim = current_tg_model.texture_dims[tindx].squeeze()
+        print(f'tdim: {tdim}')
+        toffset = self.textured_gaussian_models[0].texture_offsets[tindx]
+        tsize = tdim[0] * tdim[1]
+        print(f'texture show: {self.textured_gaussian_models[0].textures_packed[:,toffset:toffset+tsize].detach().cpu().numpy(),}')
+        print(f'texture show: {tdim.detach().cpu().numpy()}')
+        self.viewer.load_texture_show(
+            self.textured_gaussian_models[0].textures_packed[:,toffset:toffset+tsize].detach().cpu().numpy(),
+            tdim.detach().cpu().numpy()
+        )
+
 
         print("Viewer running... Ctrl+C to exit.")
         # Keep the server running indefinitely

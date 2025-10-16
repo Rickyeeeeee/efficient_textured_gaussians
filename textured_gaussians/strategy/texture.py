@@ -4,7 +4,7 @@ from typing import Any, Dict, Tuple, Union
 import torch
 
 from .base import Strategy
-from .ops import rescale_texture
+from .ops import rescale_texture, _update_param_with_optimizer
 from typing_extensions import Literal
 
 
@@ -92,14 +92,15 @@ class TextureStrategy(Strategy):
             print(f'grads.mean(): {grads.mean()}')
             print(f'Upscale points: {is_grad_high.sum()}')
 
-            texture_dims_dst = constants['texture_dims'].clone()
-            # texture_dims_dst[is_grad_high] *= 2
+            texture_dims_src = constants['texture_dims']
+            texture_offsets_src = constants['texture_offsets']
+            texture_dims_dst = texture_dims_src.clone()
 
             scales = torch.exp(params['scales'])
             is_thin_x = ((scales[:,0] / scales[:,1]) > self.min_aspect_ratio) & (scales[:,1] < self.max_scale_for_thin)
             is_thin_y = ((scales[:,1] / scales[:,0]) > self.min_aspect_ratio) & (scales[:,0] < self.max_scale_for_thin)
-            texture_dims_dst[is_thin_x & is_grad_high][:,0] *= 2
-            texture_dims_dst[is_thin_y & is_grad_high][:,1] *= 2
+            texture_dims_dst[is_thin_x & is_grad_high,0] *= 2
+            texture_dims_dst[is_thin_y & is_grad_high,1] *= 2
             texture_dims_dst[is_grad_high & ~(is_thin_y | is_thin_x)] *= 2
 
             print(f'is_thin_x: {is_thin_x.sum()}')
@@ -110,15 +111,45 @@ class TextureStrategy(Strategy):
             print(f'is_grad_high & ~(is_thin_x | is_thin_y): {(is_grad_high & ~(is_thin_y | is_thin_x)).sum()}')
 
             # upscale textures
-            textures_packed, texture_offsets = rescale_texture(
-                textures_packed=params['textures_packed'],
-                texture_offsets_src=constants['texture_offsets'],
-                texture_dims_src=constants['texture_dims'],
-                texture_dims_dst=texture_dims_dst
+            device = params['textures_packed'].device
+            texture_dims_src_dev = texture_dims_src.to(device)
+            texture_offsets_src_dev = texture_offsets_src.to(device)
+            texture_dims_dst_dev = texture_dims_dst.to(device)
+
+            with torch.no_grad():
+                textures_rescaled, texture_offsets_dst = rescale_texture(
+                    textures_packed=params['textures_packed'],
+                    texture_offsets_src=texture_offsets_src_dev,
+                    texture_dims_src=texture_dims_src_dev,
+                    texture_dims_dst=texture_dims_dst_dev
+                )
+                textures_rescaled = textures_rescaled.detach()
+
+            def _param_fn(name: str, p: torch.Tensor) -> torch.nn.Parameter:
+                return torch.nn.Parameter(textures_rescaled)
+
+            def _optimizer_fn(key: str, v: torch.Tensor) -> torch.Tensor:
+                if not isinstance(v, torch.Tensor):
+                    return v
+                with torch.no_grad():
+                    v_rescaled, _ = rescale_texture(
+                        textures_packed=v,
+                        texture_offsets_src=texture_offsets_src_dev,
+                        texture_dims_src=texture_dims_src_dev,
+                        texture_dims_dst=texture_dims_dst_dev
+                    )
+                return v_rescaled.detach()
+
+            _update_param_with_optimizer(
+                param_fn=_param_fn,
+                optimizer_fn=_optimizer_fn,
+                params=params,
+                optimizers=optimizers,
+                names=["textures_packed"]
             )
-            params['textures_packed'] = textures_packed
-            constants["texture_offsets"] = texture_offsets
-            constants["texture_dims"] = texture_dims_dst
+
+            constants["texture_offsets"] = texture_offsets_dst.to(texture_offsets_src.device)
+            constants["texture_dims"] = texture_dims_dst_dev.to(texture_dims_src.device)
 
 
             # reset running stats
