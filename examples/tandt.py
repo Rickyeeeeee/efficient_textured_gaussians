@@ -4,7 +4,7 @@ import math
 
 # Settings
 dataset_dir = "/workspace/data/Datasets/tandt_db/tandt"
-output_dir = "/workspace/work/Full_Evaluations/tandt"
+output_dir = "/workspace/work/A2TG_Correct/FixedPC_mcmc/tandt"
 point_counts = [10000, 50000, 100000, 500000]
 tex_res_start = 1
 tex_res_end = 4
@@ -104,7 +104,7 @@ for scene, point_count in itertools.product(scenes, point_counts):
         f"--disable_viewer "
         f"--data_factor {data_factor} "
         f"--min_aspect_ratio={100000000.0} "
-        f"--max_scale_for_thin={100000000.0} "
+        f"--max_scale_for_thin={0.0} "
         f"--upscale_grad2d={upscale_grad2d} "
         f"--upscale_start_iter=0 "
         f"--upscale_stop_iter={500*int(math.log2(tex_res_end))+2} "
