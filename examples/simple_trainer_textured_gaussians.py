@@ -213,6 +213,8 @@ class Config:
     upscale_every: int = 500
     upscale_abs_grad: bool = True
 
+    grad_percentage: float = 1.0
+
     def adjust_steps(self, factor: float):
         self.eval_steps = [int(i * factor) for i in self.eval_steps]
         self.save_steps = [int(i * factor) for i in self.save_steps]
@@ -674,6 +676,7 @@ class Runner:
             upscale_every=self.cfg.upscale_every,
             reset_every=self.cfg.reset_every,
             absgrad=self.cfg.absgrad,
+            grad_percentage=self.cfg.grad_percentage,
             verbose=True
         )
         self.texture_strategy_state = self.texture_strategy.initialize_state()
