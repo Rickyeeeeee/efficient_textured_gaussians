@@ -293,7 +293,7 @@ __global__ void rasterize_to_pixels_fwd_packed_textured_gaussians_kernel(
             const vec3<S> h_v = py * w_M - v_M;
 
             const vec3<S> ray_cross = glm::cross(h_u, h_v);
-            if (ray_cross.z == 0.0)
+            if (ray_cross.z == 0.0f)
                 continue;
 
             const vec2<S> s = vec2<S>(ray_cross.x / ray_cross.z, ray_cross.y / ray_cross.z);
@@ -352,7 +352,7 @@ __global__ void rasterize_to_pixels_fwd_packed_textured_gaussians_kernel(
             GSPLAT_PRAGMA_UNROLL
             for (uint32_t k = 0; k < COLOR_DIM; ++k) {
                 auto base_color = c_ptr[k];
-                auto tex_color = 0.0;
+                auto tex_color = 0.0f;
                 if (valid_texture > 0) {
                     for (uint32_t i = 0; i < 4; ++i) {
                         tex_color += bilerp_weights[i] * textures_packed[k][offsets + ucoords[i] * texture_width + vcoords[i]];
@@ -394,9 +394,9 @@ __global__ void rasterize_to_pixels_fwd_packed_textured_gaussians_kernel(
             if (alpha > gs_contrib_threshold) {
                 atomicAdd(&gs_contrib_sum[g], alpha);
                 atomicAdd(&gs_contrib_count[g], 1.0f);
-                atomicAdd(&gs_weight_sum[g], vis);
-                atomicAdd(&gs_dx_sum[g], s.x * s.x);
-                atomicAdd(&gs_dy_sum[g], s.y * s.y);
+                // atomicAdd(&gs_weight_sum[g], vis);
+                // atomicAdd(&gs_dx_sum[g], s.x * s.x);
+                // atomicAdd(&gs_dy_sum[g], s.y * s.y);
             }
         }
     }

@@ -95,9 +95,9 @@ except ImportError:
         extra_cflags = ["-O3"]
         # extra_cuda_cflags=["-G", "-lineinfo"]
         if NO_FAST_MATH:
-            extra_cuda_cflags = ["-O3"] # O3 is not used
+            extra_cuda_cflags = ["-O3", "-lineinfo"] # O3 is not used
         else:
-            extra_cuda_cflags = ["--use_fast_math", "-O3"] # O3 is not used
+            extra_cuda_cflags = ["--use_fast_math", "-O3", "-lineinfo"] # O3 is not used
         sources = list(glob.glob(os.path.join(PATH, "csrc/*.cu"))) + list(
             glob.glob(os.path.join(PATH, "csrc/*.cpp"))
         )

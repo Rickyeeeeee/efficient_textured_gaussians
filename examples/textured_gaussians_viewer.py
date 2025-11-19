@@ -3,7 +3,7 @@ import math
 import os
 import time
 import random
-from typing import List, Tuple, Dict
+from typing import List, Tuple, Dict, Any
 from dataclasses import dataclass
 from enum import Enum
 
@@ -154,6 +154,7 @@ def plot_texture_shape_barchart_pct(
             x="shape", y="percentage", hue="kind",
             dodge=False, palette=palette, ax=ax
         )
+        xticks = ax.get_xticks()
 
         # --- Remove background grid/level lines (y-percentage guide lines) ---
         ax.grid(False)                        # fully disable grid
@@ -171,6 +172,7 @@ def plot_texture_shape_barchart_pct(
         ax.set_ylabel(r"Percentage")
 
         # xtick labels are math strings; rotate and make sure they appear bold
+        ax.set_xticks(xticks)
         ax.set_xticklabels(labels_math, rotation=30, ha="right")
         for lbl in ax.get_xticklabels():
             lbl.set_fontweight("bold")
@@ -221,7 +223,6 @@ def plot_texture_shape_barchart_pct(
             target_patch.set_linewidth(1.5)
 
 
-        fig.tight_layout()
         fig.savefig(save_path, dpi=dpi, bbox_inches="tight", pad_inches=0.02)
         plt.close(fig)
 
@@ -255,6 +256,7 @@ class RenderMode(Enum):
     SH='sh'
     NO_TEX='no texture'
     SCALE='scale'
+    TEX_ONLY='texture only'
 
 class CustomViewer(UtilViewer):
     """
@@ -284,10 +286,13 @@ class CustomViewer(UtilViewer):
         self.render_mode = RenderMode.RGB
         self.tex_value: int = 0
         self.scale_x: bool = True
-        self.scale_value = 10.0
+        self.scale_ratio = 10.0
         self.min_scale_value = 10.0
         self.texture_index_slider: viser.gui.SliderHandle | None = None
         self._texture_index_callback: callable | None = None
+
+        self.scale_modifier_value = 1.0
+        self.opacity_modifier_value = 1.0
 
         super().__init__(*args, **kwargs)
 
@@ -354,14 +359,40 @@ class CustomViewer(UtilViewer):
             )
 
         with self._visualization_folder:
+            scale_modifier_slider = self.server.gui.add_slider(
+                label='scale modifier',
+                min=0.0,
+                max=10.0,
+                step=0.1,
+                initial_value=1.0,
+                marks=(1.0,)
+            )
+            @scale_modifier_slider.on_update
+            def _(_):
+                self.scale_modifier_value = scale_modifier_slider.value
+                self.rerender(_)
+
+            opacity_modifier_slider = self.server.gui.add_slider(
+                label='opacity moidifier',
+                min=0.0,
+                max=10.0,
+                step=0.1,
+                initial_value=1.0,
+                marks=(1.0,)
+            )
+            @opacity_modifier_slider.on_update
+            def _(_):
+                self.opacity_modifier_value = opacity_modifier_slider.value
+                self.rerender(_)
             render_mode_dropdown = self.server.gui.add_dropdown(
                 label='render mode',
                 options=[
                     RenderMode.RGB,
-                    RenderMode.GRAD,
-                    RenderMode.TEX_SIZE,
-                    RenderMode.SH,
                     RenderMode.NO_TEX,
+                    RenderMode.TEX_SIZE,
+                    RenderMode.TEX_ONLY,
+                    RenderMode.GRAD,
+                    RenderMode.SH,
                     RenderMode.SCALE
                 ],
                 initial_value=RenderMode.RGB
@@ -381,7 +412,7 @@ class CustomViewer(UtilViewer):
                 self.tex_value = tex_slider.value
                 self.rerender(_)
 
-            scale_slider = self.server.gui.add_slider(
+            scale_ratio_slider = self.server.gui.add_slider(
                 label='scale porpotion',
                 min=1.,
                 max=100.,
@@ -390,9 +421,9 @@ class CustomViewer(UtilViewer):
                 visible=False
             )
 
-            @scale_slider.on_update
+            @scale_ratio_slider.on_update
             def _(_):
-                self.scale_value = scale_slider.value
+                self.scale_ratio = scale_ratio_slider.value
                 self.rerender(_)
 
             min_scale_slider = self.server.gui.add_slider(
@@ -412,8 +443,8 @@ class CustomViewer(UtilViewer):
             @render_mode_dropdown.on_update
             def _(_):
                 self.render_mode = render_mode_dropdown.value
-                tex_slider.visible = self.render_mode is RenderMode.TEX_SIZE
-                scale_slider.visible = self.render_mode is RenderMode.SCALE
+                tex_slider.visible = (self.render_mode is RenderMode.TEX_SIZE) or (self.render_mode is RenderMode.TEX_ONLY)
+                scale_ratio_slider.visible = self.render_mode is RenderMode.SCALE
                 min_scale_slider.visible = self.render_mode is RenderMode.SCALE
                 self.rerender(_)
 
@@ -804,8 +835,16 @@ class GaussianViewerApp:
         Converts textures to a packed format for efficient rendering.
         """
         self.textured_gaussian_models.clear() # Clear existing models before loading new ones
+
+        def _load_checkpoint(path: str) -> Dict[str, Any]:
+            try:
+                return torch.load(path, map_location=self.device, weights_only=True)
+            except TypeError: # PyTorch < 2.1 fallback
+                return torch.load(path, map_location=self.device)
+
         for ckpt_path in self.args.ckpt:
-            ckpt = torch.load(ckpt_path, map_location=self.device)["splats"]
+            ckpt_full = _load_checkpoint(ckpt_path)
+            ckpt = ckpt_full["splats"]
             means = ckpt["means"]
             quats = ckpt["quats"]
             scales = torch.exp(ckpt["scales"])
@@ -826,8 +865,8 @@ class GaussianViewerApp:
 
             # Texture dimensions: [N, 2] with [W, H] for each texture
             # texture_dims = torch.tensor([[W, H]] * N, device=textures.device, dtype=torch.int32)
-            texture_dims = torch.load(ckpt_path, map_location=self.device)['texture_dims']
-            texture_offsets = torch.load(ckpt_path, map_location=self.device)['texture_offsets']
+            texture_dims = ckpt_full['texture_dims']
+            texture_offsets = ckpt_full['texture_offsets']
 
             # Offsets: [N, 1] where each is the cumulative sum of previous W*H areas
             # areas = texture_dims[:, 0] * texture_dims[:, 1]  # W * H for each texture -> [N]
@@ -893,7 +932,11 @@ class GaussianViewerApp:
         # Render each Gaussian model
         for i in range(num_ckpts):
             model = self.textured_gaussian_models[i]
+            means = model.means
+            quats = model.quats
+            scales = model.scales * self.viewer.scale_modifier_value
             colors = model.colors.clone()
+            opacities = model.opacities * self.viewer.opacity_modifier_value
             textures_packed = model.textures_packed.clone()
             match self.viewer.render_mode:
                 case RenderMode.TEX_SIZE:
@@ -914,6 +957,7 @@ class GaussianViewerApp:
                         # Colors on the same device/dtype as 'colors'
                         blue = torch.tensor([0.0, 0.0, 1.0], device=colors.device, dtype=colors.dtype)
                         red  = torch.tensor([1.0, 0.0, 0.0], device=colors.device, dtype=colors.dtype)
+                        black = torch.tensor([0.0, 0.0, 0.0], device=colors.device, dtype=colors.dtype)
 
                         # Convert to SH once (assumes rgb_to_sh returns a tensor of proper shape)
                         blue_sh = rgb_to_sh(blue)
@@ -922,25 +966,41 @@ class GaussianViewerApp:
                         # Apply
                         if square_mask.any():
                             colors[square_mask, 0, :] = blue_sh
+                            textures_packed[:3, ::2] = blue.unsqueeze(-1)
+                            textures_packed[:3, 1::2] = black.unsqueeze(-1)
                         if nonsquare_mask.any():
                             colors[nonsquare_mask, 0, :] = red_sh
+                            textures_packed[:3, ::2] = red.unsqueeze(-1)
+                            textures_packed[:3, 1::2] = black.unsqueeze(-1)
                     # else: tv <= 1 → nothing to highlight
 
                 case RenderMode.NO_TEX:
                     textures_packed[:3, ...] = torch.zeros_like(textures_packed[:3, ...])
                     textures_packed[-1, ...] = torch.ones_like(textures_packed[-1, ...])
+                case RenderMode.TEX_ONLY:
+                    tex_dims = model.texture_dims    # shape [..., 2]
+                    u = tex_dims[..., 0]
+                    v = tex_dims[..., 1]
+
+                    # Select all tex with both dims < tex_value and not 1x1
+                    tv = 2**int(self.viewer.tex_value)
+                    if tv > 1:
+                        valid = (u <= tv) & (v <= tv) & ~((u == 1) & (v == 1))
+
+                        opacities[~valid] = 0.0
+                    
                 case RenderMode.SCALE:
-                    mask = (model.scales[:,0] / model.scales[:,1]) > self.viewer.scale_value
-                    mask |= (model.scales[:,1] / model.scales[:,0]) > self.viewer.scale_value
+                    mask = (model.scales[:,0] / model.scales[:,1]) > self.viewer.scale_ratio
+                    mask |= (model.scales[:,1] / model.scales[:,0]) > self.viewer.scale_ratio
                     mask &= model.scales[:,0] < self.viewer.min_scale_value
                     mask &= model.scales[:,1] < self.viewer.min_scale_value
                     colors[mask,0,:] = rgb_to_sh(torch.Tensor([1.0, 0.0, 0.0]).cuda())
 
             render_colors, *_, gs_contrib_sum, gs_contrib_count, gs_weight_sum, gs_dx_sum, gs_dy_sum, meta, = rasterization_packed_textured_gaussians(
-                means=model.means,
-                quats=model.quats,
-                scales=model.scales,
-                opacities=model.opacities,
+                means=means,
+                quats=quats,
+                scales=scales,
+                opacities=opacities,
                 colors=colors,
                 textures_packed=textures_packed,
                 texture_dims=model.texture_dims,
@@ -1009,7 +1069,6 @@ class GaussianViewerApp:
             scales=model.scales,
             opacities=model.opacities,
             colors=model.colors,
-            textures=None,
             textures_packed=model.textures_packed,
             texture_dims=model.texture_dims,
             texture_offsets=model.texture_offsets,
@@ -1037,7 +1096,6 @@ class GaussianViewerApp:
             scales=model.scales,
             opacities=model.opacities,
             colors=model.colors,
-            textures=None,
             textures_packed=model.textures_packed,
             texture_dims=model.texture_dims,
             texture_offsets=model.texture_offsets,
@@ -1097,11 +1155,6 @@ class GaussianViewerApp:
         self.viewer.custom_update(train_dataset=self.trainset, val_dataset=self.valset)
         self.viewer.update_frustum_callback()
 
-        texture_dims_cpu = self.textured_gaussian_models[0].texture_dims.detach().cpu().numpy()
-        print(f'texture_dims: {texture_dims_cpu[:20]}')
-        print(f'anisotropic texture: {(texture_dims_cpu[:,0] > texture_dims_cpu[:,1]).sum().item()}')
-        print(f'texture_dims_cpu.max(): {texture_dims_cpu.max()}')
-        print(f'texture_dims_cpu.min(): {texture_dims_cpu.min()}')
 
         current_tg_model = self.textured_gaussian_models[0]
 
@@ -1116,11 +1169,8 @@ class GaussianViewerApp:
         tindx = indices[3]
         print(f'tindx: {tindx}')
         tdim = current_tg_model.texture_dims[tindx].squeeze()
-        print(f'tdim: {tdim}')
         toffset = self.textured_gaussian_models[0].texture_offsets[tindx]
         tsize = tdim[0] * tdim[1]
-        print(f'texture show: {self.textured_gaussian_models[0].textures_packed[:,toffset:toffset+tsize].detach().cpu().numpy(),}')
-        print(f'texture show: {tdim.detach().cpu().numpy()}')
         self.viewer.load_texture_show(
             self.textured_gaussian_models[0].textures_packed[:,toffset:toffset+tsize].detach().cpu().numpy(),
             tdim.detach().cpu().numpy()

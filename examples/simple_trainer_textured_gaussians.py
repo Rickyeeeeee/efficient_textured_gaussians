@@ -1210,13 +1210,13 @@ class Runner:
                     raise ValueError(f"Background mode {cfg.background_mode} not supported!")
 
             # record extras
-            with torch.no_grad():
-                if self.model_type == "textured_gaussians":
-                    accumulated_stats['gs_contrib_count'] += extra['gs_contrib_count']
-                    accumulated_stats['gs_contrib_sum'] += extra['gs_contrib_sum']
-                    accumulated_stats['gs_weight_sum'] += extra['gs_weight_sum']
-                    accumulated_stats['gs_dx_sum'] += extra['gs_dx_sum']
-                    accumulated_stats['gs_dy_sum'] += extra['gs_dy_sum']
+            # with torch.no_grad():
+                # if self.model_type == "textured_gaussians":
+                    # accumulated_stats['gs_contrib_count'] += extra['gs_contrib_count']
+                    # accumulated_stats['gs_contrib_sum'] += extra['gs_contrib_sum']
+                    # accumulated_stats['gs_weight_sum'] += extra['gs_weight_sum']
+                    # accumulated_stats['gs_dx_sum'] += extra['gs_dx_sum']
+                    # accumulated_stats['gs_dy_sum'] += extra['gs_dy_sum']
 
             self.strategy.step_pre_backward(
                 params=self.splats,

@@ -37,3 +37,5 @@ Thumbs.db
 results/
 temp/
 
+# Profile
+*.ncu-rep
