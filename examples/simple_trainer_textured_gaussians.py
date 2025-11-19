@@ -183,7 +183,7 @@ class Config:
     scale_lambda: float = 1e-1
     
     # Model for splatting.
-    model_type: Literal["2dgs", "textured_gaussians"] = "2dgs"
+    model_type: Literal["2dgs", "textured_gaussians", "a2tg"] = "2dgs"
 
     # Dump information to tensorboard every this steps
     tb_every: int = 100
@@ -322,6 +322,11 @@ def create_splats_with_optimizers(
         params.append(("colors", torch.nn.Parameter(colors), 2.5e-3))  
 
     if cfg.model_type == "textured_gaussians":
+        textures = torch.ones(points.shape[0], cfg.texture_resolution, cfg.texture_resolution, 4)
+        textures[:, :, :, :3] = 0.1 # init color to low value
+        textures[:, :, :, 3:] = 1.0 # init alpha to 1.0
+        params.append(("textures", torch.nn.Parameter(textures), 2.5e-3))
+    elif cfg.model_type == "a2tg":
         textures = torch.ones(points.shape[0], cfg.texture_resolution, cfg.texture_resolution, 4)
         textures[:, :, :, :3] = 0.1 # init color to low value
         textures[:, :, :, 3:] = 1.0 # init alpha to 1.0
@@ -639,7 +644,7 @@ class Runner:
         print("Model initialized. Number of GS:", len(self.splats["means"]))
         self.model_type = cfg.model_type
 
-        if self.model_type in ["2dgs", "textured_gaussians"]:
+        if self.model_type in ["2dgs", "textured_gaussians", "a2tg"]:
             key_for_gradient = "gradient_2dgs"
         else:
             key_for_gradient = "means2d"
@@ -752,7 +757,7 @@ class Runner:
             mem_size_stats["shN"] = self.splats["shN"].numel() * 4
         else:
             mem_size_stats["features"] = self.splats["features"].numel() * 4
-        if self.model_type == 'textured_gaussians':
+        if self.model_type == 'a2tg':
             texture_channels = 0
             if self.cfg.textured_rgb:
                 texture_channels += 3
@@ -760,6 +765,8 @@ class Runner:
                 texture_channels += 1
             mem_size_stats["textures_packed"]= self.splats["textures_packed"].shape[1] * texture_channels * 4
             mem_size_stats["texture_dims"] = self.constants["texture_dims"].numel() * 4
+        elif self.model_type == "textured_gaussians":
+            mem_size_stats["textures"] = self.splats["textures"].numel()*4
         
         return mem_size_stats
 
@@ -891,7 +898,7 @@ class Runner:
                 sparse_grad=self.cfg.sparse_grad,
                 **kwargs,
             )
-        elif self.model_type == "textured_gaussians":
+        elif self.model_type == "a2tg":
             # textures = self.get_textures()
             textures_packed = self.get_textures_packed()
             (
@@ -927,9 +934,36 @@ class Runner:
             )
             extra['gs_contrib_count'] = gs_contrib_count
             extra['gs_contrib_sum'] = gs_contrib_sum
-            extra['gs_weight_sum'] = gs_weight_sum
-            extra['gs_dx_sum'] = gs_dx_sum
-            extra['gs_dy_sum'] = gs_dy_sum
+        elif self.model_type == "textured_gaussians":
+            textures = self.get_textures()
+            (
+                render_colors,
+                render_alphas,
+                render_normals,
+                normals_from_depth,
+                render_distort,
+                render_median,
+                gs_contrib_count,
+                gs_contrib_sum,
+                info,
+            ) = rasterization_textured_gaussians(
+                means=means,
+                quats=quats,
+                scales=scales,
+                opacities=opacities,
+                colors=colors,
+                textures=textures,
+                viewmats=torch.linalg.inv(camtoworlds),  # [C, 4, 4]
+                Ks=Ks,  # [C, 3, 3]
+                width=width,
+                height=height,
+                packed=self.cfg.packed,
+                absgrad=self.cfg.absgrad,
+                sparse_grad=self.cfg.sparse_grad,
+                **kwargs,
+            )
+            extra['gs_contrib_count'] = gs_contrib_count
+            extra['gs_contrib_sum'] = gs_contrib_sum
         return (
             render_colors,
             render_alphas,
@@ -1023,7 +1057,7 @@ class Runner:
                 sparse_grad=self.cfg.sparse_grad,
                 **kwargs,
             )
-        elif self.model_type == "textured_gaussians":
+        elif self.model_type == "a2tg":
             textures_packed = self.get_textures_packed()
             (
                 render_colors,
@@ -1047,6 +1081,37 @@ class Runner:
                 textures_packed=textures_packed,  # [3, \sum(N_i * H_i * W_i)]
                 texture_dims=self.constants["texture_dims"],  # [N, 2]
                 texture_offsets= self.constants["texture_offsets"],  # [N, 1]
+                viewmats=torch.linalg.inv(camtoworlds),  # [C, 4, 4]
+                Ks=Ks,  # [C, 3, 3]
+                width=width,
+                height=height,
+                packed=self.cfg.packed,
+                absgrad=self.cfg.absgrad,
+                sparse_grad=self.cfg.sparse_grad,
+                **kwargs,
+            )
+        elif self.model_type == "textured_gaussians":
+            textures = self.get_textures()
+            (
+                render_colors,
+                render_alphas,
+                render_normals,
+                normals_from_depth,
+                render_distort,
+                render_median,
+                _,
+                _,
+                _,
+                _,
+                _,
+                info,
+            ) = rasterization_textured_gaussians(
+                means=means,
+                quats=quats,
+                scales=scales,
+                opacities=opacities,
+                colors=colors,
+                textures=textures,
                 viewmats=torch.linalg.inv(camtoworlds),  # [C, 4, 4]
                 Ks=Ks,  # [C, 3, 3]
                 width=width,
@@ -1226,7 +1291,7 @@ class Runner:
                 info=info,
             )
 
-            if self.cfg.model_type == 'textured_gaussians':
+            if self.cfg.model_type == 'a2tg':
                 self.texture_strategy.step_pre_backward(
                     params=self.splats,
                     optimizers=self.optimizers,
@@ -1372,7 +1437,7 @@ class Runner:
             else:
                 assert_never(self.cfg.strategy)
 
-            if self.model_type == "textured_gaussians":
+            if self.model_type == "a2tg":
                 self.texture_strategy.step_post_backward(
                         constants=self.constants,
                         params=self.splats,
@@ -1422,7 +1487,7 @@ class Runner:
                 print("Step: ", step, stats)
                 with open(f"{self.stats_dir}/train_step{step:04d}.json", "w") as f:
                     json.dump(stats, f)
-                if self.cfg.model_type == "textured_gaussians":
+                if self.cfg.model_type == "a2tg":
                     torch.save(
                         {
                             "step": step,
@@ -1457,16 +1522,16 @@ class Runner:
                 # Update the scene.
                 self.viewer.update(step, num_train_rays_per_step)
 
-                if step > self.texture_strategy.upscale_start_iter and step % 100 == 0:
-                    grad2d = self.texture_strategy_state["grad2d"]
-                    self.viewer.set_plot(
-                        name='grad_plot', 
-                        histc_input=grad2d/(step % self.cfg.upscale_every), 
-                        title='gradient 2d abs',
-                        hist_bins=1000,
-                        hist_min_val=0,
-                        hist_max_val=0.1
-                    )
+                # if step > self.texture_strategy.upscale_start_iter and step % 100 == 0:
+                #     grad2d = self.texture_strategy_state["grad2d"]
+                #     self.viewer.set_plot(
+                #         name='grad_plot', 
+                #         histc_input=grad2d/(step % self.cfg.upscale_every), 
+                #         title='gradient 2d abs',
+                #         hist_bins=1000,
+                #         hist_min_val=0,
+                #         hist_max_val=0.1
+                #     )
 
     @torch.no_grad()
     def eval(self, step: int):
