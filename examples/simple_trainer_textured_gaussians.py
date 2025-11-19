@@ -1544,7 +1544,7 @@ class Runner:
             self.valset, batch_size=1, shuffle=False, num_workers=2
         )
         ellipse_time = 0
-        metrics = {"psnr": [], "ssim": [], "lpips": []}
+        metrics = {"psnr": [], "ssim": [], "lpips": [], "val_frame_time": []}
         per_view_metrics = {}
         for i, data in tqdm.tqdm(enumerate(valloader)):
             camtoworlds = data["camtoworld"].to(device)
@@ -1664,9 +1664,42 @@ class Runner:
 
         ellipse_time /= len(valloader)
 
+        for i, data in tqdm.tqdm(enumerate(valloader)):
+            camtoworlds = data["camtoworld"].to(device)
+            Ks = data["K"].to(device)
+            pixels = data["image"].to(device) / 255.0
+            height, width = pixels.shape[1:3]
+
+            torch.cuda.synchronize()
+            tic = time.time()
+            (
+                colors,
+                alphas,
+                normals,
+                normals_from_depth,
+                render_distort,
+                render_median,
+                _,
+                _,
+            ) = self.rasterize_splats(
+                camtoworlds=camtoworlds,
+                Ks=Ks,
+                width=width,
+                height=height,
+                sh_degree=cfg.sh_degree,
+                near_plane=cfg.near_plane,
+                far_plane=cfg.far_plane,
+                render_mode="RGB",
+            )  # [1, H, W, 3]
+            torch.cuda.synchronize()
+            frame_time = time.time() - tic
+            metrics["val_frame_time"].append(frame_time)
+
+
         psnr = torch.stack(metrics["psnr"]).mean()
         ssim = torch.stack(metrics["ssim"]).mean()
         lpips = torch.stack(metrics["lpips"]).mean()
+        fps = 1.0 / np.array(metrics["val_frame_time"]).mean()
         mem_stats = self.get_splat_mem_size_bytes()
         total_size = sum(mem_stats.values())
         print(
@@ -1674,6 +1707,7 @@ class Runner:
             f"Time: {ellipse_time:.3f}s/image "
             f"Number of GS: {len(self.splats['means'])} "
             f"Total mem in MB: {total_size / (1024 * 1024)}"
+            f"val FPS: {fps}"
         )
         # save stats as json
         stats = {
@@ -1683,7 +1717,8 @@ class Runner:
             "ellipse_time": ellipse_time,
             "num_GS": len(self.splats["means"]),
             **mem_stats,
-            "mem_mb": total_size / (1024 * 1024)
+            "mem_mb": total_size / (1024 * 1024),
+            "val_fps": fps
         }
         with open(f"{self.stats_dir}/val_step{step:04d}.json", "w") as f:
             json.dump(stats, f)
