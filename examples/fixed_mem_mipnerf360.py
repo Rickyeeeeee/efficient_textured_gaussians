@@ -3,21 +3,26 @@ import itertools
 import math
 
 # Settings
-dataset_dir = "/workspace/data/Datasets/tandt_db/db"
-output_dir = "/workspace/work/A2TG_Correct/FixedMemory_mcmc/db"
-texture_resolution = 4
+dataset_dir = "/workspace/data/Datasets/MipNerf360"
+output_dir = "/workspace/work/A2TG_Correct/FixedMemory_mcmc/MipNerf360"
 tex_res_start = 1
 tex_res_end = 4
-data_factor = 1
-scenes = [
-    'drjohnson',
-    'playroom'
-]
+outdoor_scenes = ["bicycle", "garden", "stump"]
+indoor_scenes = ["room", "counter", "kitchen", "bonsai"]
+scenes_dict = {
+    'bicycle': 200000,
+    'bonsai': 200000,
+    'counter': 200000,
+    'garden': 200000,
+    'kitchen': 200000,
+    'room': 200000,
+    'stump': 200000
+}
 
 # Hyperparameters
 min_aspect_ratio = 4.0
 max_scale_for_thin = 0.01
-upscale_grad2d = 0.00002
+upscale_2d = 0.00002
 
 has_rgb = True
 has_alpha = True
@@ -27,7 +32,11 @@ is_eval = False
 CUDA_DEVICE_ID=0
 
 point_count = 258620
-for scene in scenes:
+for scene, _ in scenes_dict.items():
+    if scene in outdoor_scenes:
+        data_factor = 4
+    else:
+        data_factor = 2
     method_name = "2dgs_mcmc"
     cmd_2dgs = (
         f"CUDA_VISIBLE_DEVICES={CUDA_DEVICE_ID} python simple_trainer_textured_gaussians.py mcmc "
@@ -55,7 +64,11 @@ for scene in scenes:
     #     os.system(cmd_2dgs)
 
 point_count = 122950
-for scene in scenes:
+for scene, _ in scenes_dict.items():
+    if scene in outdoor_scenes:
+        data_factor = 4
+    else:
+        data_factor = 2
     method_name = "2dgs_mcmc"
     cmd_2dgs = (
         f"CUDA_VISIBLE_DEVICES={CUDA_DEVICE_ID} python simple_trainer_textured_gaussians.py mcmc "
@@ -110,9 +123,12 @@ for scene in scenes:
     #     print(f"[INFO] Running command for scene {scene}: {cmd_textured_gaussians}")
     #     os.system(cmd_textured_gaussians)
 
-
-point_counts = [210000, 215000]
-for scene, point_count in itertools.product(scenes, point_counts):
+# for scene, point_count in itertools.product(scenes, point_counts):
+for scene, point_count in scenes_dict.items():
+    if scene in outdoor_scenes:
+        data_factor = 4
+    else:
+        data_factor = 2
     method_name = "2dgs_mcmc"
     cmd_2dgs = (
         f"CUDA_VISIBLE_DEVICES={CUDA_DEVICE_ID} python simple_trainer_textured_gaussians.py mcmc "
@@ -139,6 +155,7 @@ for scene, point_count in itertools.product(scenes, point_counts):
         print(f"[INFO] Running command for scene {scene}: {cmd_2dgs}")
         os.system(cmd_2dgs)
 
+    # method_name = f'ntex_anisotropic_{'rgb' if has_rgb else ''}{'a' if has_alpha else ''}'
     method_name = f'ntex_full'
     cmd_ntex = (
         f"CUDA_VISIBLE_DEVICES={CUDA_DEVICE_ID} python simple_trainer_textured_gaussians.py mcmc "
@@ -160,7 +177,7 @@ for scene, point_count in itertools.product(scenes, point_counts):
         f"--data_factor {data_factor} "
         f"--min_aspect_ratio={min_aspect_ratio} "
         f"--max_scale_for_thin={max_scale_for_thin} "
-        f"--upscale_grad2d={upscale_grad2d} "
+        f"--upscale_grad2d={upscale_2d} "
         f"--upscale_start_iter=0 "
         f"--upscale_stop_iter={500*int(math.log2(tex_res_end))+2} "
         f"--upscale_every=500 "
@@ -168,3 +185,4 @@ for scene, point_count in itertools.product(scenes, point_counts):
     if not os.path.isdir(f"{output_dir}/{method_name}/pc{point_count}/{scene}/videos") or render:
         print(f"[INFO] Running command for scene {scene}: {cmd_ntex}")
         os.system(cmd_ntex)
+

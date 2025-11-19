@@ -3,15 +3,15 @@ import itertools
 import math
 
 # Settings
-dataset_dir = "/workspace/data/Datasets/tandt_db/db"
-output_dir = "/workspace/work/A2TG_Correct/FixedMemory_mcmc/db"
+dataset_dir = "/workspace/data/Datasets/tandt_db/tandt"
+output_dir = "/workspace/work/A2TG_Correct/FixedMemory_mcmc/tandt"
 texture_resolution = 4
 tex_res_start = 1
 tex_res_end = 4
 data_factor = 1
 scenes = [
-    'drjohnson',
-    'playroom'
+    'train',
+    'truck'
 ]
 
 # Hyperparameters
@@ -26,7 +26,7 @@ is_eval = False
 
 CUDA_DEVICE_ID=0
 
-point_count = 258620
+point_count = 215517
 for scene in scenes:
     method_name = "2dgs_mcmc"
     cmd_2dgs = (
@@ -54,7 +54,7 @@ for scene in scenes:
     #     print(f"[INFO] Running command for scene {scene}: {cmd_2dgs}")
     #     os.system(cmd_2dgs)
 
-point_count = 122950
+point_count = 102459
 for scene in scenes:
     method_name = "2dgs_mcmc"
     cmd_2dgs = (
@@ -111,7 +111,7 @@ for scene in scenes:
     #     os.system(cmd_textured_gaussians)
 
 
-point_counts = [210000, 215000]
+point_counts = [170000, 165000]
 for scene, point_count in itertools.product(scenes, point_counts):
     method_name = "2dgs_mcmc"
     cmd_2dgs = (
@@ -138,7 +138,7 @@ for scene, point_count in itertools.product(scenes, point_counts):
     else:
         print(f"[INFO] Running command for scene {scene}: {cmd_2dgs}")
         os.system(cmd_2dgs)
-
+        
     method_name = f'ntex_full'
     cmd_ntex = (
         f"CUDA_VISIBLE_DEVICES={CUDA_DEVICE_ID} python simple_trainer_textured_gaussians.py mcmc "
@@ -165,6 +165,8 @@ for scene, point_count in itertools.product(scenes, point_counts):
         f"--upscale_stop_iter={500*int(math.log2(tex_res_end))+2} "
         f"--upscale_every=500 "
     )
-    if not os.path.isdir(f"{output_dir}/{method_name}/pc{point_count}/{scene}/videos") or render:
+    if os.path.isdir(f"{output_dir}/{method_name}/pc{point_count}/{scene}/videos") and not render:
+        print(f"[INFO] Skipping scene {scene} for ntex as videos directory already exists.")
+    else:
         print(f"[INFO] Running command for scene {scene}: {cmd_ntex}")
         os.system(cmd_ntex)
