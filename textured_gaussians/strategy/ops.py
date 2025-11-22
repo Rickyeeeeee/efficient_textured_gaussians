@@ -414,7 +414,7 @@ def rescale_texture(
 
     device = textures_packed.device
     texture_areas = (texture_dims_dst[...,0] * texture_dims_dst[...,1]).unsqueeze(-1)
-    texture_offsets_dst = torch.ones_like(texture_offsets_src, device=device)
+    texture_offsets_dst = torch.zeros_like(texture_offsets_src, device=device)
     texture_offsets_dst[1:,...] = (torch.cumsum(input=texture_areas, dim=0))[:-1,...]
 
     textures_src: Tensor = textures_packed

@@ -73,8 +73,8 @@ def visualize_texture_comparison(
     for i in range(n):
         Hs, Ws = dims_src[i]
         Hd, Wd = dims_dst[i]
-        offs_src = offsets_src[i, 0]
-        offs_dst = offsets_dst[i, 0]
+        offs_src = offsets_src[i]
+        offs_dst = offsets_dst[i]
 
         tex_src = textures_src[:, offs_src:offs_src + Hs * Ws].reshape(4, Hs, Ws)
         tex_dst = textures_dst[:, offs_dst:offs_dst + Hd * Wd].reshape(4, Hd, Wd)
@@ -92,7 +92,7 @@ def visualize_texture_comparison(
 
     fig.suptitle(title, fontsize=16)
     plt.tight_layout()
-    plt.show()
+    plt.savefig(f"{title}.png", dpi=200)
 
 
 # === Main loop ===
@@ -101,12 +101,20 @@ def main():
     torch.manual_seed(0)
 
     dims_src = torch.tensor([
+        [1,2],
+        [2,1],
+        [2,2],
+        [2,2],
         [64, 64],
         [48, 32],
         [40, 80]
     ])
     texture_dims_src = dims_src.clone()
     texture_dims_dst = torch.tensor([
+        [2,2],
+        [2,2],
+        [2,4],
+        [4,2],
         [32, 32],
         [96, 64],
         [80, 40]

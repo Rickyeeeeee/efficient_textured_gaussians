@@ -30,7 +30,7 @@ __global__ void rasterize_to_pixels_fwd_packed_textured_gaussians_kernel(
                                            // This is (KWH)^{-1} in the paper (takes screen [x,y] and map to [u,v])
     const S *__restrict__ colors,      // [C, N, COLOR_DIM] or [nnz, COLOR_DIM]  // Gaussian colors or ND features.
     const S *__restrict__ opacities,   // [C, N] or [nnz]                        // Gaussian opacities that support per-view values.
-    at::PackedTensorAccessor32<const S, 2, at::RestrictPtrTraits> textures_packed,    // [N, Texture_Resolution, Texture_Resolution, 4]
+    at::PackedTensorAccessor32<const S, 2, at::RestrictPtrTraits> textures_packed,    // [N, total_packed_texels]
     const int32_t *__restrict__ texture_dims, // [C, N, 2]  // The dimensions of the textures in the packed tensor.
     const int32_t *__restrict__ texture_offsets, // [C, N]  // The offsets of the textures in the packed tensor.
     const S *__restrict__ normals,     // [C, N, 3] or [nnz, 3]                  // The normals in camera space.
@@ -299,19 +299,24 @@ __global__ void rasterize_to_pixels_fwd_packed_textured_gaussians_kernel(
             const vec2<S> s = vec2<S>(ray_cross.x / ray_cross.z, ray_cross.y / ray_cross.z);
 
             // calculate texture coordinates and bilinear interpolation weights
-            int texture_width = texture_dims[g * 2];
-            int texture_height = texture_dims[g * 2 + 1];
+            int texture_height  = texture_dims[g * 2 + 0];
+            int texture_width   = texture_dims[g * 2 + 1];
             int32_t ucoords[4];
             int32_t vcoords[4];
             S bilerp_weights[4];
-            int32_t valid_texture = compute_bilinear_coords_weights(s.x, s.y, texture_width, texture_height, ucoords, vcoords, bilerp_weights);
+            int32_t valid_texture = compute_bilinear_coords_weights(
+                s.x, s.y, 
+                texture_width, texture_height, 
+                ucoords, vcoords, bilerp_weights
+            );
 
             // calculate alpha texture scaling factor
-            int offsets = texture_offsets[g];
+            int offset = texture_offsets[g];
             S alpha_scaling_factor = 0.0f;
             if (valid_texture > 0) {
                 for (uint32_t i = 0; i < 4; ++i) {
-                    alpha_scaling_factor += bilerp_weights[i] * textures_packed[3][offsets + ucoords[i] * texture_width + vcoords[i]];
+                    int linear_idx = offset + vcoords[i] * texture_width + ucoords[i];
+                    alpha_scaling_factor += bilerp_weights[i] * textures_packed[3][linear_idx];
                 }
             } else {
                 alpha_scaling_factor = 1.0f;
@@ -355,7 +360,8 @@ __global__ void rasterize_to_pixels_fwd_packed_textured_gaussians_kernel(
                 auto tex_color = 0.0f;
                 if (valid_texture > 0) {
                     for (uint32_t i = 0; i < 4; ++i) {
-                        tex_color += bilerp_weights[i] * textures_packed[k][offsets + ucoords[i] * texture_width + vcoords[i]];
+                        int linear_idx = offset + vcoords[i] * texture_width + ucoords[i];
+                        tex_color += bilerp_weights[i] * textures_packed[k][linear_idx];
                     }
                 }
                 pix_out[k] += (base_color + tex_color) * vis;

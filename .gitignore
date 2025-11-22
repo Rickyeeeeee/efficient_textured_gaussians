@@ -39,3 +39,9 @@ temp/
 
 # Profile
 *.ncu-rep
+output.png
+Rescaling Comparison: Checkerboard.png
+Rescaling Comparison: Horizontal Stripes.png
+Rescaling Comparison: Radial Gradient.png
+Rescaling Comparison: Sine Waves.png
+Rescaling Comparison: Vertical Stripes.png

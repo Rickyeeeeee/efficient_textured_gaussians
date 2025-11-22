@@ -343,7 +343,8 @@ def create_splats_with_optimizers(
         textures_packed[3, :] = 1.0
 
         # Texture dimensions per texture (same for all)
-        texture_dims = torch.tensor([[W, H]] * N, dtype=torch.int32, requires_grad=False, device=device)
+        # H,W
+        texture_dims = torch.tensor([[H, W]] * N, dtype=torch.int32, requires_grad=False, device=device)
 
         # Compute offsets for each texture in packed array
         pixels_per_texture = H * W
