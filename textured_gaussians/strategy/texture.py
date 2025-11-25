@@ -86,7 +86,7 @@ class TextureStrategy(Strategy):
             grads = state["grad2d"] / count.clamp_min(1)
             device = grads.device
 
-            is_grad_high = grads > self.upscale_grad2d
+            is_grad_high = grads >= self.upscale_grad2d
             print(f'grads.min(): {grads.min()}')
             print(f'grads.max(): {grads.max()}')
             print(f'grads.mean(): {grads.mean()}')

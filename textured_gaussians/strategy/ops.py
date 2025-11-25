@@ -435,6 +435,6 @@ def rescale_texture(
         tex_sampled = tex_sampled.squeeze(0).reshape(4, tex_area_dst)
         textures_dst[:,offset_dst:offset_dst+tex_area_dst] = tex_sampled
     
-    textures_src = textures_dst
+    # textures_src = textures_dst
 
     return textures_dst, texture_offsets_dst
