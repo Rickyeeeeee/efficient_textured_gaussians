@@ -330,7 +330,7 @@ def create_splats_with_optimizers(
         textures = torch.ones(points.shape[0], cfg.texture_resolution, cfg.texture_resolution, 4)
         textures[:, :, :, :3] = 0.1 # init color to low value
         textures[:, :, :, 3:] = 1.0 # init alpha to 1.0
-        params.append(("textures", torch.nn.Parameter(textures), 2.5e-3))
+        # params.append(("textures", torch.nn.Parameter(textures), 2.5e-3))
 
         N, H, W, C = textures.shape
         assert C == 4, "Expected 4 channels (RGBA)"
@@ -802,42 +802,6 @@ class Runner:
         textures_packed = torch.cat([rgb_textures, alpha_textures], dim=0) # [4, \sum(N_i * H_i * W_i)]
         textures_packed = textures_packed.clamp(0.0, 1.0)
         return textures_packed
-
-    def resize_textures_packed(self, new_dims: Tensor):
-        """
-        Resize the packed textures to new resolutions, and update the texture dimensions and offsets.
-        new_resolutions: List of tuples (H, W) for each texture.
-        """
-        
-        texture_dims = new_dims
-        
-        texture_areas = (texture_dims[...,0] * texture_dims[...,1]).unsqueeze(-1)
-        texture_offsets = torch.zeros_like(self.constants['texture_offsets'])
-        texture_offsets[1:,...] = (torch.cumsum(input=texture_areas, dim=0))[:-1,...]
-
-        textures_src: Tensor = self.splats['textures_packed']
-        textures_dst = torch.zeros((4, texture_areas[-1,0]))
-
-        # Down sample (Averaging)
-        for dim_dst, offset_dst, dim_src, offset_src in zip(texture_dims, texture_offsets, self.constants['texture_dims'], self.constants['texture_offsets']):
-            tex_area_src = dim_src[0] * dim_src[1]
-            tex_src = textures_src[...,offset_src:offset_src+tex_area_src].resize(4, dim_src[0], dim_src[1]).unsqueeze(0)
-
-            tex_sampled = F.interpolate(
-                tex_src,
-                size=(dim_dst[0], dim_dst[1]),
-                mode='area'
-            )
-
-            tex_area_dst = dim_dst[0] * dim_dst[1]
-            tex_sampled = tex_sampled.squeeze(0).resize(4, tex_area_dst)
-            textures_dst[...,offset_dst:offset_dst+tex_area_dst] = tex_sampled
-
-        # Update splats
-        self.splat['textures_packed'] = textures_dst
-        self.constants['texture_dims'] = texture_dims
-        self.constants['texture_offsets'] = texture_offsets
-
 
     def rasterize_splats(
         self,

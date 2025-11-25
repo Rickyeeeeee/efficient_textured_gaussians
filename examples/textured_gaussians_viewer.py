@@ -237,7 +237,6 @@ class TexturedGaussiansModel:
     scales: Tensor
     opacities: Tensor
     colors: Tensor
-    textures: Tensor
     sh0: Tensor
     shN: Tensor
     textures_packed: Tensor
@@ -851,7 +850,7 @@ class GaussianViewerApp:
             opacities = torch.sigmoid(ckpt["opacities"])
             sh0 = ckpt["sh0"]
             shN = ckpt["shN"]
-            textures = ckpt["textures"]
+            # textures = ckpt["textures"]
 
             # Convert textures from [N, W, H, C] to packed format [C, N*W*H]
             textures_packed = ckpt['textures_packed']
@@ -861,7 +860,7 @@ class GaussianViewerApp:
             textures_packed = torch.cat([rgb_textures, alpha_textures], dim=0) # [4, \sum(N_i * H_i * W_i)]
             textures_packed = textures_packed.clamp(0.0, 1.0)
 
-            N, W, H, C = textures.shape
+            # N, W, H, C = textures.shape
 
             # Texture dimensions: [N, 2] with [W, H] for each texture
             # texture_dims = torch.tensor([[W, H]] * N, device=textures.device, dtype=torch.int32)
@@ -884,7 +883,6 @@ class GaussianViewerApp:
                 scales=scales,
                 opacities=opacities,
                 colors=colors,
-                textures=textures,
                 sh0=sh0,
                 shN=shN,
                 textures_packed=textures_packed,

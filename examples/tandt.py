@@ -4,8 +4,8 @@ import math
 
 # Settings
 dataset_dir = "/workspace/data/Datasets/tandt_db/tandt"
-output_dir = "/workspace/work/A2TG_Correct/FixedPC_mcmc/tandt"
-point_counts = [10000, 50000, 100000, 500000]
+output_dir = "/workspace/work/A2TG/FixedPC_mcmc/tandt"
+point_counts = [10000, 50000, 100000, 500000, 1000000]
 tex_res_start = 1
 tex_res_end = 4
 data_factor = 1
@@ -54,7 +54,7 @@ for scene, point_count in itertools.product(scenes, point_counts):
         print(f"[INFO] Running command for scene {scene}: {cmd_2dgs}")
         os.system(cmd_2dgs)
 
-    method_name = f'ntex_full'
+    method_name = f'a2tg'
     cmd_ntex = (
         f"CUDA_VISIBLE_DEVICES={CUDA_DEVICE_ID} python simple_trainer_textured_gaussians.py mcmc "
         f"{f"--ckpt {output_dir}/{method_name}/pc{point_count}/{scene}/ckpts/ckpt_29999.pt " if render else ""}"
@@ -63,7 +63,7 @@ for scene, point_count in itertools.product(scenes, point_counts):
         f"--result_dir {output_dir}/{method_name}/pc{point_count}/{scene} "
         f"--dataset colmap "
         f"--init_type pretrained "
-        f"--model_type=textured_gaussians "
+        f"--model_type=a2tg "
         f"--init_num_pts {point_count} "
         f"--strategy.cap-max {point_count} "
         f"--strategy.refine-start-iter=1000000000000 "
@@ -84,7 +84,7 @@ for scene, point_count in itertools.product(scenes, point_counts):
         print(f"[INFO] Running command for scene {scene}: {cmd_ntex}")
         os.system(cmd_ntex)
 
-    method_name = f'ntex_noniso'
+    method_name = f'a2tg_noniso'
     cmd_ntex = (
         f"CUDA_VISIBLE_DEVICES={CUDA_DEVICE_ID} python simple_trainer_textured_gaussians.py mcmc "
         f"{f"--ckpt {output_dir}/{method_name}/pc{point_count}/{scene}/ckpts/ckpt_29999.pt " if render else ""}"
@@ -93,7 +93,7 @@ for scene, point_count in itertools.product(scenes, point_counts):
         f"--result_dir {output_dir}/{method_name}/pc{point_count}/{scene} "
         f"--dataset colmap "
         f"--init_type pretrained "
-        f"--model_type=textured_gaussians "
+        f"--model_type=a2tg "
         f"--init_num_pts {point_count} "
         f"--strategy.cap-max {point_count} "
         f"--strategy.refine-start-iter=1000000000000 "
