@@ -328,17 +328,17 @@ def create_splats_with_optimizers(
         params.append(("textures", torch.nn.Parameter(textures), 2.5e-3))
     elif cfg.model_type == "a2tg":
         textures = torch.ones(points.shape[0], cfg.texture_resolution, cfg.texture_resolution, 4)
-        textures[:, :, :, :3] = 0.1 # init color to low value
-        textures[:, :, :, 3:] = 1.0 # init alpha to 1.0
-        params.append(("textures", torch.nn.Parameter(textures), 2.5e-3))
+        # textures[:, :, :, :3] = 0.1 # init color to low value
+        # textures[:, :, :, 3:] = 1.0 # init alpha to 1.0
+        # params.append(("textures", torch.nn.Parameter(textures), 2.5e-3))
 
         N, H, W, C = textures.shape
         assert C == 4, "Expected 4 channels (RGBA)"
-        textures_rgb = textures[:, :, :, :4]  # (N, H, W, 4)
+        textures_rgba = textures  # (N, H, W, 4)
 
         # Rearrange to (N, 3, H, W) then flatten to pack all textures
-        textures_rgb = textures_rgb.permute(0, 3, 1, 2).contiguous()  # (N, 4, H, W)
-        textures_packed = textures_rgb.reshape(4, -1)  # (4, N*H*W)
+        textures_rgba = textures_rgba.permute(3, 0, 1, 2).contiguous()  # (N, 4, H, W)
+        textures_packed = textures_rgba.reshape(4, -1)  # (4, N*H*W)
         textures_packed[:3, :] = 0.1
         textures_packed[3, :] = 1.0
 
