@@ -3,16 +3,16 @@ import itertools
 import math
 
 # Settings
-dataset_dir = "/workspace/data/Datasets/MipNerf360"
-output_dir = "/workspace/work/A2TG/FixedPC_mcmc_tex_abla/MipNerf360"
+dataset_dir = "/workspace/data/Datasets/tandt_db/db"
+output_dir = "/workspace/work/A2TG/FixedPC_mcmc_tex_abla/db"
 point_counts = [100000]
 tex_res_start = 1
-tex_res_ends = [2, 4, 8]
-outdoor_scenes = ["bicycle", "garden", "stump"]
-indoor_scenes = ["room", "counter", "kitchen", "bonsai"]
-scenes = []
-scenes.extend(outdoor_scenes)
-scenes.extend(indoor_scenes)
+tex_res_ends = [2, 8, 16]
+data_factor = 1
+scenes = [
+    'drjohnson',
+    'playroom'
+]
 
 # Hyperparameters
 min_aspect_ratio = 4.0
@@ -27,10 +27,6 @@ is_eval = False
 CUDA_DEVICE_ID=0
 
 for scene, point_count, tex_res_end in itertools.product(scenes, point_counts, tex_res_ends):
-    if scene in outdoor_scenes:
-        data_factor = 4
-    else:
-        data_factor = 2
     method_name = "2dgs_mcmc"
     cmd_2dgs = (
         f"CUDA_VISIBLE_DEVICES={CUDA_DEVICE_ID} python simple_trainer_textured_gaussians.py mcmc "

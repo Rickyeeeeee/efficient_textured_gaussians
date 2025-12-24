@@ -765,7 +765,7 @@ class Runner:
             if self.cfg.textured_alpha:
                 texture_channels += 1
             mem_size_stats["textures_packed"]= self.splats["textures_packed"].shape[1] * texture_channels * 4
-            mem_size_stats["texture_dims"] = self.constants["texture_dims"].numel() * 4
+            # mem_size_stats["texture_dims"] = self.constants["texture_dims"].numel() * 4
         elif self.model_type == "textured_gaussians":
             mem_size_stats["textures"] = self.splats["textures"].numel()*4
         
