@@ -255,6 +255,7 @@ class RenderMode(Enum):
     TEX_SIZE='texture size'
     SH='sh'
     NO_TEX='no texture'
+    NO_BASE='no base'
     SCALE='scale'
     TEX_ONLY='texture only'
 
@@ -389,6 +390,7 @@ class CustomViewer(UtilViewer):
                 options=[
                     RenderMode.RGB,
                     RenderMode.NO_TEX,
+                    RenderMode.NO_BASE,
                     RenderMode.TEX_SIZE,
                     RenderMode.TEX_ONLY,
                     RenderMode.GRAD,
@@ -851,7 +853,7 @@ class GaussianViewerApp:
             opacities = torch.sigmoid(ckpt["opacities"])
             sh0 = ckpt["sh0"]
             shN = ckpt["shN"]
-            textures = ckpt["textures"]
+            # textures = ckpt["textures"]
 
             # Convert textures from [N, W, H, C] to packed format [C, N*W*H]
             textures_packed = ckpt['textures_packed']
@@ -861,7 +863,7 @@ class GaussianViewerApp:
             textures_packed = torch.cat([rgb_textures, alpha_textures], dim=0) # [4, \sum(N_i * H_i * W_i)]
             textures_packed = textures_packed.clamp(0.0, 1.0)
 
-            N, W, H, C = textures.shape
+            # N, W, H, C = textures.shape
 
             # Texture dimensions: [N, 2] with [W, H] for each texture
             # texture_dims = torch.tensor([[W, H]] * N, device=textures.device, dtype=torch.int32)
@@ -884,7 +886,7 @@ class GaussianViewerApp:
                 scales=scales,
                 opacities=opacities,
                 colors=colors,
-                textures=textures,
+                textures=None,
                 sh0=sh0,
                 shN=shN,
                 textures_packed=textures_packed,
@@ -977,6 +979,12 @@ class GaussianViewerApp:
                 case RenderMode.NO_TEX:
                     textures_packed[:3, ...] = torch.zeros_like(textures_packed[:3, ...])
                     textures_packed[-1, ...] = torch.ones_like(textures_packed[-1, ...])
+
+                case RenderMode.NO_BASE:
+                    black = torch.tensor([0.0, 0.0, 0.0], device=colors.device, dtype=colors.dtype)
+                    black_sh  = rgb_to_sh(black)
+                    colors[:,0, :] = black_sh
+
                 case RenderMode.TEX_ONLY:
                     tex_dims = model.texture_dims    # shape [..., 2]
                     u = tex_dims[..., 0]
