@@ -2,8 +2,15 @@ import os
 import itertools
 import math
 
+import argparse
+
+parser = argparse.ArgumentParser(  
+    description='sum the integers at the command line')  
+parser.add_argument('--mem', type=int, default=200)  
+args = parser.parse_args()
+
 # Settings
-dataset_dir = "/workspace/data/Datasets/tandt_db/tandt"
+dataset_dir = "/workspace/data/tandt_db/tandt"
 output_dir = "/workspace/work/A2TG/FixedMemory_mcmc/tandt"
 texture_resolution = 4
 tex_res_start = 1
@@ -26,7 +33,13 @@ is_eval = False
 
 CUDA_DEVICE_ID=0
 
-point_count = 215517
+splat_sizes = {
+    '2dgs': 58,
+    'textured_gaussians': 122,
+}
+
+point_count = int(float(args.mem) * 1000.0 * 1000.0 / (splat_sizes['2dgs']*4))
+print(f'2dgs point count: {point_count}')
 for scene in scenes:
     method_name = "2dgs_mcmc"
     cmd_2dgs = (
@@ -54,7 +67,8 @@ for scene in scenes:
         print(f"[INFO] Running command for scene {scene}: {cmd_2dgs}")
         os.system(cmd_2dgs)
 
-point_count = 102459
+point_count = int(float(args.mem) * 1000.0 * 1000.0 / (splat_sizes['textured_gaussians']*4))
+print(f'textured gaussians point count: {point_count}')
 for scene in scenes:
     method_name = "2dgs_mcmc"
     cmd_2dgs = (
@@ -111,8 +125,14 @@ for scene in scenes:
         os.system(cmd_textured_gaussians)
 
 
-point_counts = [170000, 160000]
-for scene, point_count in itertools.product(scenes, point_counts):
+if args.mem == 50:
+    point_count = 160000
+elif args.mem == 100:
+    point_count = 340000
+if args.mem == 200:
+    point_count = 690000
+
+for scene in scenes:
     method_name = "2dgs_mcmc"
     cmd_2dgs = (
         f"CUDA_VISIBLE_DEVICES={CUDA_DEVICE_ID} python simple_trainer_textured_gaussians.py mcmc "

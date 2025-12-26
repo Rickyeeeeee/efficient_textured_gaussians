@@ -2,22 +2,50 @@ import os
 import itertools
 import math
 
+import argparse
+
+parser = argparse.ArgumentParser(  
+    description='sum the integers at the command line')  
+parser.add_argument('--mem', type=int, default=200)  
+args = parser.parse_args()
+
 # Settings
-dataset_dir = "/workspace/data/Datasets/MipNerf360"
+dataset_dir = "/workspace/data/MipNerf360"
 output_dir = "/workspace/work/A2TG/FixedMemory_mcmc/MipNerf360"
 tex_res_start = 1
 tex_res_end = 4
 outdoor_scenes = ["bicycle", "garden", "stump"]
 indoor_scenes = ["room", "counter", "kitchen", "bonsai"]
-scenes_dict = {
-    'bicycle': 200000,
-    'bonsai': 200000,
-    'counter': 200000,
-    'garden': 200000,
-    'kitchen': 200000,
-    'room': 200000,
-    'stump': 200000
-}
+if args.mem == 60:
+    scenes_dict = {
+        'bicycle': 200000,
+        'bonsai': 200000,
+        'counter': 200000,
+        'garden': 200000,
+        'kitchen': 200000,
+        'room': 200000,
+        'stump': 200000
+    }
+elif args.mem == 100:
+    scenes_dict = {
+        'bicycle': 340000,
+        'bonsai': 340000,
+        'counter': 340000,
+        'garden': 340000,
+        'kitchen': 340000,
+        'room': 340000,
+        'stump': 340000
+    }
+elif args.mem == 200:
+    scenes_dict = {
+        'bicycle': 700000,
+        'bonsai': 700000,
+        'counter': 700000,
+        'garden': 700000,
+        'kitchen': 700000,
+        'room': 700000,
+        'stump': 700000
+    }
 
 # Hyperparameters
 min_aspect_ratio = 4.0
@@ -31,7 +59,13 @@ is_eval = False
 
 CUDA_DEVICE_ID=0
 
-point_count = 258620
+splat_sizes = {
+    '2dgs': 58,
+    'textured_gaussians': 122,
+}
+
+point_count = int(float(args.mem) * 1000.0 * 1000.0 / (splat_sizes['2dgs']*4))
+print(f'2dgs point count: {point_count}')
 for scene, _ in scenes_dict.items():
     if scene in outdoor_scenes:
         data_factor = 4
@@ -63,7 +97,8 @@ for scene, _ in scenes_dict.items():
         print(f"[INFO] Running command for scene {scene}: {cmd_2dgs}")
         os.system(cmd_2dgs)
 
-point_count = 122950
+point_count = int(float(args.mem) * 1000.0 * 1000.0 / (splat_sizes['textured_gaussians']*4))
+print(f'textured gaussians point count: {point_count}')
 for scene, _ in scenes_dict.items():
     if scene in outdoor_scenes:
         data_factor = 4
