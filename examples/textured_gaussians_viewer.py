@@ -237,7 +237,6 @@ class TexturedGaussiansModel:
     scales: Tensor
     opacities: Tensor
     colors: Tensor
-    textures: Tensor
     sh0: Tensor
     shN: Tensor
     textures_packed: Tensor
@@ -854,6 +853,7 @@ class GaussianViewerApp:
             sh0 = ckpt["sh0"]
             shN = ckpt["shN"]
             # textures = ckpt["textures"]
+            # textures = ckpt["textures"]
 
             # Convert textures from [N, W, H, C] to packed format [C, N*W*H]
             textures_packed = ckpt['textures_packed']
@@ -886,7 +886,6 @@ class GaussianViewerApp:
                 scales=scales,
                 opacities=opacities,
                 colors=colors,
-                textures=None,
                 sh0=sh0,
                 shN=shN,
                 textures_packed=textures_packed,

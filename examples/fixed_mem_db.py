@@ -4,7 +4,7 @@ import math
 
 # Settings
 dataset_dir = "/workspace/data/Datasets/tandt_db/db"
-output_dir = "/workspace/work/A2TG_Correct/FixedMemory_mcmc/db"
+output_dir = "/workspace/work/A2TG/FixedMemory_mcmc/db"
 texture_resolution = 4
 tex_res_start = 1
 tex_res_end = 4
@@ -48,11 +48,11 @@ for scene in scenes:
         f"--data_factor {data_factor} "
         f"--upscale_start_iter 100000000"
     )
-    # if os.path.isdir(f"{output_dir}/2dgs_mcmc/pc{point_count}/{scene}/videos") and not render:
-    #     print(f"[INFO] Skipping scene {scene} for 2DGS as videos directory already exists.")
-    # else:
-    #     print(f"[INFO] Running command for scene {scene}: {cmd_2dgs}")
-    #     os.system(cmd_2dgs)
+    if os.path.isdir(f"{output_dir}/2dgs_mcmc/pc{point_count}/{scene}/videos") and not render:
+        print(f"[INFO] Skipping scene {scene} for 2DGS as videos directory already exists.")
+    else:
+        print(f"[INFO] Running command for scene {scene}: {cmd_2dgs}")
+        os.system(cmd_2dgs)
 
 point_count = 122950
 for scene in scenes:
@@ -76,11 +76,11 @@ for scene in scenes:
         f"--data_factor {data_factor} "
         f"--upscale_start_iter 100000000"
     )
-    # if os.path.isdir(f"{output_dir}/2dgs_mcmc/pc{point_count}/{scene}/videos") and not render:
-    #     print(f"[INFO] Skipping scene {scene} for 2DGS as videos directory already exists.")
-    # else:
-    #     print(f"[INFO] Running command for scene {scene}: {cmd_2dgs}")
-    #     os.system(cmd_2dgs)
+    if os.path.isdir(f"{output_dir}/2dgs_mcmc/pc{point_count}/{scene}/videos") and not render:
+        print(f"[INFO] Skipping scene {scene} for 2DGS as videos directory already exists.")
+    else:
+        print(f"[INFO] Running command for scene {scene}: {cmd_2dgs}")
+        os.system(cmd_2dgs)
 
     method_name = f'textured_gaussians_{'rgb' if has_rgb else ''}{'a' if has_alpha else ''}'
     cmd_textured_gaussians = (
@@ -106,12 +106,12 @@ for scene in scenes:
         f"--upscale_stop_iter=1002 "
         f"--upscale_every=500 "
     )
-    # if not os.path.isdir(f"{output_dir}/{method_name}/pc{point_count}/{scene}/videos") or render:
-    #     print(f"[INFO] Running command for scene {scene}: {cmd_textured_gaussians}")
-    #     os.system(cmd_textured_gaussians)
+    if not os.path.isdir(f"{output_dir}/{method_name}/pc{point_count}/{scene}/videos") or render:
+        print(f"[INFO] Running command for scene {scene}: {cmd_textured_gaussians}")
+        os.system(cmd_textured_gaussians)
 
 
-point_counts = [210000, 215000]
+point_counts = [210000, 220000]
 for scene, point_count in itertools.product(scenes, point_counts):
     method_name = "2dgs_mcmc"
     cmd_2dgs = (
@@ -139,7 +139,7 @@ for scene, point_count in itertools.product(scenes, point_counts):
         print(f"[INFO] Running command for scene {scene}: {cmd_2dgs}")
         os.system(cmd_2dgs)
 
-    method_name = f'ntex_full'
+    method_name = f'a2tg'
     cmd_ntex = (
         f"CUDA_VISIBLE_DEVICES={CUDA_DEVICE_ID} python simple_trainer_textured_gaussians.py mcmc "
         f"{f"--ckpt {output_dir}/{method_name}/pc{point_count}/{scene}/ckpts/ckpt_29999.pt " if render else ""}"
@@ -148,7 +148,7 @@ for scene, point_count in itertools.product(scenes, point_counts):
         f"--result_dir {output_dir}/{method_name}/pc{point_count}/{scene} "
         f"--dataset colmap "
         f"--init_type pretrained "
-        f"--model_type=textured_gaussians "
+        f"--model_type=a2tg "
         f"--init_num_pts {point_count} "
         f"--strategy.cap-max {point_count} "
         f"--strategy.refine-start-iter=1000000000000 "

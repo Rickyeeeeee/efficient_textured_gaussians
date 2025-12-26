@@ -4,10 +4,10 @@ import math
 
 # Settings
 dataset_dir = "/workspace/data/Datasets/MipNerf360"
-output_dir = "/workspace/work/A2TG_Correct/FixedPC_mcmc_tex_abla/MipNerf360"
-point_counts = [50000]
+output_dir = "/workspace/work/A2TG/FixedPC_mcmc_tex_abla/MipNerf360"
+point_counts = [100000]
 tex_res_start = 1
-tex_res_ends = [2, 8, 16]
+tex_res_ends = [2, 4, 8]
 outdoor_scenes = ["bicycle", "garden", "stump"]
 indoor_scenes = ["room", "counter", "kitchen", "bonsai"]
 scenes = []
@@ -36,8 +36,8 @@ for scene, point_count, tex_res_end in itertools.product(scenes, point_counts, t
         f"CUDA_VISIBLE_DEVICES={CUDA_DEVICE_ID} python simple_trainer_textured_gaussians.py mcmc "
         f"{f"--ckpt {output_dir}/{method_name}/pc{point_count}/{scene}/ckpts/ckpt_29999.pt " if render else ""}"
         f"--max_steps 30000 "
-        f"--eval_steps 7000 30000 "
-        f"--save_steps 7000 30000 "
+        f"--eval_steps 30000 "
+        f"--save_steps 30000 "
         f"--data_dir {dataset_dir}/{scene} "
         f"--result_dir {output_dir}/2dgs_mcmc/pc{point_count}/{scene} "
         f"--dataset colmap "
@@ -58,7 +58,7 @@ for scene, point_count, tex_res_end in itertools.product(scenes, point_counts, t
         os.system(cmd_2dgs)
 
     # method_name = f'ntex_anisotropic_{'rgb' if has_rgb else ''}{'a' if has_alpha else ''}'
-    method_name = f'ntex_full_tex{tex_res_end}'
+    method_name = f'a2tg_tex{tex_res_end}'
     cmd_ntex = (
         f"CUDA_VISIBLE_DEVICES={CUDA_DEVICE_ID} python simple_trainer_textured_gaussians.py mcmc "
         f"{f"--ckpt {output_dir}/{method_name}/pc{point_count}/{scene}/ckpts/ckpt_29999.pt " if render else ""}"
@@ -67,7 +67,7 @@ for scene, point_count, tex_res_end in itertools.product(scenes, point_counts, t
         f"--result_dir {output_dir}/{method_name}/pc{point_count}/{scene} "
         f"--dataset colmap "
         f"--init_type pretrained "
-        f"--model_type=textured_gaussians "
+        f"--model_type=a2tg "
         f"--init_num_pts {point_count} "
         f"--strategy.cap-max {point_count} "
         f"--strategy.refine-start-iter=1000000000000 "
