@@ -5,7 +5,7 @@ import math
 # Settings
 dataset_dir = "/workspace/data/Datasets/tandt_db/db"
 output_dir = "/workspace/work/A2TG/FixedPC_mcmc_tex_abla/db"
-point_counts = [100000]
+point_counts = [1000000]
 tex_res_start = 1
 tex_res_ends = [2, 8, 16]
 data_factor = 1

@@ -40,7 +40,6 @@ splat_sizes = {
 
 point_count = int(float(args.mem) * 1000.0 * 1000.0 / (splat_sizes['2dgs']*4))
 print(f'2dgs point count: {point_count}')
-point_count = 258620
 for scene in scenes:
     method_name = "2dgs_mcmc"
     cmd_2dgs = (
