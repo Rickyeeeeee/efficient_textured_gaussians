@@ -254,6 +254,7 @@ class RenderMode(Enum):
     TEX_SIZE='texture size'
     SH='sh'
     NO_TEX='no texture'
+    NO_BASE='no base'
     SCALE='scale'
     TEX_ONLY='texture only'
 
@@ -388,6 +389,7 @@ class CustomViewer(UtilViewer):
                 options=[
                     RenderMode.RGB,
                     RenderMode.NO_TEX,
+                    RenderMode.NO_BASE,
                     RenderMode.TEX_SIZE,
                     RenderMode.TEX_ONLY,
                     RenderMode.GRAD,
@@ -851,6 +853,7 @@ class GaussianViewerApp:
             sh0 = ckpt["sh0"]
             shN = ckpt["shN"]
             # textures = ckpt["textures"]
+            # textures = ckpt["textures"]
 
             # Convert textures from [N, W, H, C] to packed format [C, N*W*H]
             textures_packed = ckpt['textures_packed']
@@ -975,6 +978,12 @@ class GaussianViewerApp:
                 case RenderMode.NO_TEX:
                     textures_packed[:3, ...] = torch.zeros_like(textures_packed[:3, ...])
                     textures_packed[-1, ...] = torch.ones_like(textures_packed[-1, ...])
+
+                case RenderMode.NO_BASE:
+                    black = torch.tensor([0.0, 0.0, 0.0], device=colors.device, dtype=colors.dtype)
+                    black_sh  = rgb_to_sh(black)
+                    colors[:,0, :] = black_sh
+
                 case RenderMode.TEX_ONLY:
                     tex_dims = model.texture_dims    # shape [..., 2]
                     u = tex_dims[..., 0]
